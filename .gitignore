@@ -1,0 +1,27 @@
+# Secrets / local runtime config (token is auto-generated on first `npm start`)
+codexapp.config.json
+
+# Dependencies
+node_modules/
+**/node_modules/
+
+# Expo / Metro / build outputs
+.expo/
+**/.expo/
+dist/
+**/dist/
+dist-check/
+**/dist-check/
+web-build/
+
+# Native build outputs (archived projects)
+**/build/
+**/.gradle/
+**/Pods/
+*.xcuserstate
+**/DerivedData/
+
+# Misc
+*.log
+.DS_Store
+Thumbs.db

@@ -1,0 +1,118 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="CodexApp" />
+  <meta name="theme-color" content="#0b1220" />
+  <link rel="manifest" href="manifest.webmanifest" />
+  <link rel="apple-touch-icon" href="icon-180.png" />
+  <link rel="icon" href="icon-180.png" />
+  <link rel="stylesheet" href="style.css" />
+  <title>CodexApp</title>
+</head>
+<body>
+  <!-- Setup gate -->
+  <section id="setup" class="setup hidden">
+    <div class="setup-card">
+      <h1>CodexApp</h1>
+      <p class="muted">远程控制电脑上的 Codex</p>
+      <label>中继地址</label>
+      <input id="setupUrl" type="url" inputmode="url" placeholder="http://192.168.x.x:4123" />
+      <label>访问 Token</label>
+      <input id="setupToken" type="text" placeholder="粘贴电脑终端显示的 Token" autocapitalize="off" autocorrect="off" />
+      <button id="setupSave" class="btn primary big">连接</button>
+      <p class="muted small">Token 在电脑端启动中继时打印。</p>
+    </div>
+  </section>
+
+  <!-- Main app -->
+  <div id="app" class="app hidden">
+    <header class="topbar">
+      <div class="brand">
+        <span id="connDot" class="dot"></span>
+        <strong>CodexApp</strong>
+      </div>
+      <div class="topinfo">
+        <span id="statusPill" class="pill idle">空闲</span>
+        <button id="sessionsBtn" class="icon-btn" aria-label="会话">📂</button>
+        <button id="menuBtn" class="icon-btn" aria-label="菜单">⚙</button>
+      </div>
+    </header>
+    <div class="subbar">
+      <span id="cwdLabel" class="muted small mono">—</span>
+    </div>
+
+    <main id="feed" class="feed"></main>
+
+    <div id="approvals" class="approvals"></div>
+
+    <button id="diffBar" class="diff-bar hidden">📝 查看本次改动 (diff)</button>
+
+    <footer class="composer">
+      <div id="runningBar" class="running-bar hidden">
+        <span class="muted small">任务进行中…</span>
+        <button id="interruptBtn" class="btn danger small">停止</button>
+      </div>
+      <div class="input-row">
+        <textarea id="input" rows="1" placeholder="输入提示词，控制 Codex…"></textarea>
+        <button id="sendBtn" class="btn primary">发送</button>
+      </div>
+      <label class="steer-toggle"><input type="checkbox" id="steerMode" /> 纠偏模式（插话当前任务）</label>
+    </footer>
+  </div>
+
+  <!-- Settings sheet -->
+  <div id="sheet" class="sheet hidden">
+    <div class="sheet-card">
+      <h2>设置</h2>
+      <label>工作目录 (cwd)</label>
+      <input id="cfgCwd" type="text" class="mono" autocapitalize="off" autocorrect="off" />
+      <label>审批策略</label>
+      <select id="cfgApproval">
+        <option value="on-request">on-request（按需，推荐）</option>
+        <option value="untrusted">untrusted（几乎每条都问）</option>
+        <option value="on-failure">on-failure（失败才问）</option>
+        <option value="never">never（不审批）</option>
+      </select>
+      <label>沙箱</label>
+      <select id="cfgSandbox">
+        <option value="workspace-write">workspace-write</option>
+        <option value="read-only">read-only</option>
+        <option value="danger-full-access">danger-full-access</option>
+      </select>
+      <div class="sheet-actions">
+        <button id="cfgApply" class="btn primary">应用 (下个会话生效)</button>
+        <button id="newThreadBtn" class="btn secondary">新建会话</button>
+      </div>
+      <button id="enableNotif" class="btn secondary full">开启审批通知</button>
+      <button id="forget" class="btn ghost full">退出/忘记连接</button>
+      <button id="sheetClose" class="btn ghost full">关闭</button>
+    </div>
+  </div>
+
+  <!-- Sessions / projects sheet -->
+  <div id="sessionsSheet" class="sheet hidden">
+    <div class="sheet-card">
+      <h2>会话 / 项目</h2>
+      <p class="muted small">点一条接着写——会切到它的项目目录，继续这段对话。</p>
+      <div id="sessionsList" class="sessions-list"></div>
+      <button id="sessionsRefresh" class="btn secondary full">刷新</button>
+      <button id="sessionsClose" class="btn ghost full">关闭</button>
+    </div>
+  </div>
+
+  <!-- Diff sheet -->
+  <div id="diffSheet" class="sheet hidden">
+    <div class="sheet-card">
+      <h2>本次改动 (diff)</h2>
+      <pre id="diffContent" class="diff"></pre>
+      <button id="diffClose" class="btn ghost full">关闭</button>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

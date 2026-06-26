@@ -1,0 +1,14 @@
+{
+  "name": "codexapp-relay",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Relay + PWA to remote-control a local Codex app-server from an iPhone.",
+  "scripts": {
+    "start": "node relay/server.mjs",
+    "probe": "node relay/probe.mjs"
+  },
+  "dependencies": {
+    "ws": "^8.18.0"
+  }
+}

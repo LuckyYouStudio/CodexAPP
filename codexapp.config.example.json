@@ -1,0 +1,10 @@
+{
+  "codexBin": "",
+  "host": "0.0.0.0",
+  "port": 4123,
+  "token": "",
+  "defaultCwd": "C:\\test",
+  "approvalPolicy": "on-request",
+  "sandbox": "workspace-write",
+  "model": null
+}
