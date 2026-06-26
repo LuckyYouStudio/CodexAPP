@@ -2,51 +2,38 @@ import { useEffect, useState } from "react";
 import { View, ActivityIndicator, StyleSheet } from "react-native";
 import { StatusBar } from "expo-status-bar";
 import { C } from "./src/theme";
-import { loadCreds, saveCreds, clearToken } from "./src/storage";
+import { loadProfile, saveProfile, clearProfile, profileReady, loadKeyPair } from "./src/storage";
 import { useRelay } from "./src/useRelay";
 import SetupScreen from "./src/SetupScreen";
 import MainScreen from "./src/MainScreen";
 
-// MainScreen mounts the relay connection; isolated so the hook re-runs cleanly
-// when creds change (connect/disconnect happens via useRelay's effect).
-function Connected({ creds, onForget }) {
-  const relay = useRelay(creds);
+function Connected({ profile, keypair, onForget }) {
+  const relay = useRelay(profile, keypair);
   return <MainScreen relay={relay} onForget={onForget} />;
 }
 
 export default function App() {
   const [ready, setReady] = useState(false);
-  const [creds, setCreds] = useState({ url: "", token: "" });
+  const [profile, setProfile] = useState(null);
+  const [keypair, setKeypair] = useState(null);
 
   useEffect(() => {
-    loadCreds().then((c) => { setCreds(c); setReady(true); });
+    Promise.all([loadProfile(), loadKeyPair()]).then(([p, k]) => { setProfile(p); setKeypair(k); setReady(true); });
   }, []);
 
-  const onConnect = async (url, token) => {
-    await saveCreds(url, token);
-    setCreds({ url, token });
-  };
+  const onConnect = async (p) => { await saveProfile(p); setProfile(p); };
+  const onForget = async () => { await clearProfile(); setProfile((p) => ({ ...p, token: "", password: "" })); };
 
-  const onForget = async () => {
-    await clearToken();
-    setCreds((c) => ({ url: c.url, token: "" }));
-  };
-
-  if (!ready) {
-    return (
-      <View style={s.loading}>
-        <StatusBar style="light" />
-        <ActivityIndicator color={C.accent} />
-      </View>
-    );
+  if (!ready || !keypair) {
+    return (<View style={s.loading}><StatusBar style="light" /><ActivityIndicator color={C.accent} /></View>);
   }
 
   return (
     <View style={s.app}>
       <StatusBar style="light" />
-      {creds.token
-        ? <Connected creds={creds} onForget={onForget} />
-        : <SetupScreen initialUrl={creds.url} onConnect={onConnect} />}
+      {profileReady(profile)
+        ? <Connected profile={profile} keypair={keypair} onForget={onForget} />
+        : <SetupScreen initial={profile} onConnect={onConnect} />}
     </View>
   );
 }

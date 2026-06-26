@@ -1,6 +1,15 @@
 # Secrets / local runtime config (token is auto-generated on first `npm start`)
 codexapp.config.json
 
+# Cloud agent/broker secrets (credentials, device keys, account store, certs)
+cloud/agent.config.json
+cloud/agent.keys.json
+cloud/agent.pairing.json
+cloud/pairing-code.txt
+cloud/accounts.json
+cloud/certs/
+**/*.pem
+
 # Dependencies
 node_modules/
 **/node_modules/

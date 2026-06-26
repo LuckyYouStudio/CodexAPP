@@ -55,7 +55,7 @@ function EventRow({ e }) {
 }
 
 export default function MainScreen({ relay, onForget }) {
-  const { conn, connected, relayState, config, events, approvals, diff, threads, actions } = relay;
+  const { conn, connected, cloud, agentFp, relayState, config, events, approvals, diff, threads, actions } = relay;
   const [text, setText] = useState("");
   const [steerMode, setSteerMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -68,8 +68,10 @@ export default function MainScreen({ relay, onForget }) {
   const running = relayState.status === "running";
 
   const connLabel =
-    conn === "unauthorized" ? "Token 无效" :
-    conn === "open" ? (connected ? (running ? "运行中" : "空闲") : "中继已连，等待 Codex") :
+    conn === "unauthorized" ? "账号/密码无效" :
+    conn === "needCode" ? "需要配对码" :
+    conn === "pairFailed" ? "配对失败" :
+    conn === "open" ? (connected ? (running ? "运行中" : "空闲") : (cloud ? (agentFp ? "配对/连接中…" : "等待电脑 Agent") : "中继已连，等待 Codex")) :
     conn === "connecting" ? "连接中…" : "已断开";
 
   const send = () => {
@@ -113,7 +115,8 @@ export default function MainScreen({ relay, onForget }) {
         </View>
         <Text style={s.subbar} numberOfLines={1}>
           {(relayState.threadName ? "「" + relayState.threadName + "」 " : "") +
-            (relayState.cwd || "—") + (relayState.model ? "  ·  " + relayState.model : "") + "  ·  " + (relayState.approvalPolicy || "")}
+            (relayState.cwd || "—") + (relayState.model ? "  ·  " + relayState.model : "") + "  ·  " + (relayState.approvalPolicy || "") +
+            (cloud && agentFp ? "  ·  🔒" + agentFp : "")}
         </Text>
 
         <KeyboardAvoidingView
