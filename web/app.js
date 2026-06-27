@@ -347,23 +347,48 @@ $("sessionsBtn").onclick = () => { $("sessionsSheet").classList.remove("hidden")
 $("sessionsRefresh").onclick = loadSessions;
 $("sessionsClose").onclick = () => $("sessionsSheet").classList.add("hidden");
 
+function projName(cwd) {
+  if (!cwd) return "(未知目录)";
+  return cwd.split(/[\\/]/).filter(Boolean).pop() || cwd;
+}
+
+// Group conversations by project folder (cwd), like Codex's project tree.
 function renderSessions(threads) {
   const list = $("sessionsList");
   list.innerHTML = "";
   if (!threads.length) { list.innerHTML = '<p class="muted small">没有会话</p>'; return; }
+
+  const groups = new Map();
   threads.forEach((t) => {
-    const item = document.createElement("button");
-    item.className = "session-item";
-    const when = t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : "";
-    item.innerHTML =
-      `<div class="s-name">${escapeHtml(t.name || "(无标题)")}</div>` +
-      `<div class="s-meta mono">${escapeHtml(t.cwd || "")}</div>` +
-      `<div class="s-meta">${escapeHtml(when)}${t.source ? " · " + escapeHtml(t.source) : ""}</div>`;
-    item.onclick = () => {
-      sendWs({ type: "resumeThread", threadId: t.id });
-      $("sessionsSheet").classList.add("hidden");
-    };
-    list.appendChild(item);
+    const key = t.cwd || "(未知目录)";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  });
+  const recent = (arr) => Math.max(...arr.map((t) => t.updatedAt || 0));
+  const sorted = [...groups.entries()].sort((a, b) => recent(b[1]) - recent(a[1]));
+
+  sorted.forEach(([cwd, ts]) => {
+    const header = document.createElement("div");
+    header.className = "session-group";
+    header.innerHTML =
+      `<div class="sg-name">📁 ${escapeHtml(projName(cwd))} <span class="sg-count">${ts.length}</span></div>` +
+      `<div class="sg-path mono">${escapeHtml(cwd)}</div>`;
+    list.appendChild(header);
+
+    ts.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
+    ts.forEach((t) => {
+      const item = document.createElement("button");
+      item.className = "session-item nested";
+      const when = t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : "";
+      item.innerHTML =
+        `<div class="s-name">${escapeHtml(t.name || "(无标题)")}</div>` +
+        `<div class="s-meta">${escapeHtml(when)}${t.source ? " · " + escapeHtml(t.source) : ""}</div>`;
+      item.onclick = () => {
+        sendWs({ type: "resumeThread", threadId: t.id });
+        $("sessionsSheet").classList.add("hidden");
+      };
+      list.appendChild(item);
+    });
   });
 }
 

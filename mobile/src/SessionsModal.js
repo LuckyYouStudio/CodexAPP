@@ -1,24 +1,45 @@
 import { Modal, View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { C } from "./theme";
 
+const projName = (cwd) => (cwd ? (cwd.split(/[\\/]/).filter(Boolean).pop() || cwd) : "(未知目录)");
+
+function groupByProject(threads) {
+  const groups = new Map();
+  (threads || []).forEach((t) => {
+    const key = t.cwd || "(未知目录)";
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(t);
+  });
+  const recent = (arr) => Math.max(...arr.map((t) => t.updatedAt || 0));
+  return [...groups.entries()]
+    .map(([cwd, ts]) => [cwd, ts.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))])
+    .sort((a, b) => recent(b[1]) - recent(a[1]));
+}
+
 export default function SessionsModal({ visible, threads, onResume, onRefresh, onClose }) {
+  const groups = groupByProject(threads);
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={s.backdrop}>
         <View style={s.sheet}>
           <Text style={s.h2}>会话 / 项目</Text>
-          <Text style={s.hint}>点一条接着写——会切到它的项目目录，继续这段对话。</Text>
+          <Text style={s.hint}>按项目目录分组，点一条接着写。</Text>
           <ScrollView style={{ maxHeight: "70%" }}>
-            {(!threads || threads.length === 0) && <Text style={s.hint}>没有会话</Text>}
-            {(threads || []).map((t) => (
-              <Pressable key={t.id} style={s.item} onPress={() => onResume(t.id)}>
-                <Text style={s.name} numberOfLines={1}>{t.name || "(无标题)"}</Text>
-                <Text style={s.meta} numberOfLines={1}>{t.cwd || ""}</Text>
-                <Text style={s.meta}>
-                  {t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : ""}
-                  {t.source ? " · " + t.source : ""}
-                </Text>
-              </Pressable>
+            {groups.length === 0 && <Text style={s.hint}>没有会话</Text>}
+            {groups.map(([cwd, ts]) => (
+              <View key={cwd}>
+                <Text style={s.groupName} numberOfLines={1}>📁 {projName(cwd)}  ({ts.length})</Text>
+                <Text style={s.groupPath} numberOfLines={1}>{cwd}</Text>
+                {ts.map((t) => (
+                  <Pressable key={t.id} style={s.item} onPress={() => onResume(t.id)}>
+                    <Text style={s.name} numberOfLines={1}>{t.name || "(无标题)"}</Text>
+                    <Text style={s.meta}>
+                      {t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : ""}
+                      {t.source ? " · " + t.source : ""}
+                    </Text>
+                  </Pressable>
+                ))}
+              </View>
             ))}
           </ScrollView>
           <Pressable style={[s.btn, s.secondary]} onPress={onRefresh}><Text style={s.btnText}>刷新</Text></Pressable>
@@ -34,9 +55,11 @@ const s = StyleSheet.create({
   sheet: { backgroundColor: C.card, borderTopLeftRadius: 20, borderTopRightRadius: 20, padding: 18, maxHeight: "88%" },
   h2: { color: C.text, fontSize: 20, fontWeight: "800", marginBottom: 4 },
   hint: { color: C.muted, fontSize: 13, marginBottom: 8 },
-  item: { backgroundColor: C.bg2, borderColor: C.line, borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8 },
+  item: { backgroundColor: C.bg2, borderColor: C.line, borderWidth: 1, borderRadius: 10, padding: 12, marginBottom: 8, marginLeft: 12 },
   name: { color: C.text, fontWeight: "600", marginBottom: 4 },
   meta: { color: C.muted, fontSize: 12 },
+  groupName: { color: C.accent2, fontWeight: "700", fontSize: 14, marginTop: 10 },
+  groupPath: { color: C.muted, fontSize: 11, marginBottom: 6 },
   btn: { borderRadius: 10, paddingVertical: 13, alignItems: "center", borderWidth: 1, borderColor: C.line, marginTop: 8 },
   secondary: { backgroundColor: C.card2 },
   ghost: { backgroundColor: "transparent" },
