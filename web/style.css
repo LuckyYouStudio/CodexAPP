@@ -37,6 +37,9 @@ body {
   border-radius: 18px; padding: 24px; display: flex; flex-direction: column; gap: 10px;
 }
 .setup-card h1 { margin: 0; font-size: 28px; }
+.setup-card .tabs { display: flex; gap: 6px; background: var(--bg2); border-radius: 10px; padding: 4px; margin: 12px 0 4px; }
+.setup-card .tab { flex: 1; padding: 9px; border: none; border-radius: 8px; background: transparent; color: var(--muted); font-size: 13px; font-weight: 600; cursor: pointer; }
+.setup-card .tab.on { background: var(--card2); color: var(--text); }
 .setup-card label { font-size: 13px; color: var(--muted); margin-top: 8px; }
 input, select, textarea {
   width: 100%; background: var(--bg2); color: var(--text); border: 1px solid var(--line);

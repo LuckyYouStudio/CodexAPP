@@ -53,8 +53,13 @@ function genCode() {
   return Array.from(b).map((x) => A[x % A.length]).join("");
 }
 function loadPairing() {
-  if (fs.existsSync(PAIRING_FILE)) { try { return JSON.parse(fs.readFileSync(PAIRING_FILE, "utf8")); } catch {} }
-  const p = { pinnedPhone: null, code: genCode() };
+  let p = null;
+  if (fs.existsSync(PAIRING_FILE)) { try { p = JSON.parse(fs.readFileSync(PAIRING_FILE, "utf8")); } catch {} }
+  if (!p) p = { code: genCode() };
+  // Multiple devices (web + phone) can be paired. Migrate old single-pin field.
+  if (!Array.isArray(p.pinnedPhones)) p.pinnedPhones = p.pinnedPhone ? [p.pinnedPhone] : [];
+  delete p.pinnedPhone;
+  if (!p.code) p.code = genCode();
   fs.writeFileSync(PAIRING_FILE, JSON.stringify(p, null, 2));
   return p;
 }
@@ -87,7 +92,7 @@ function sendSnapshot() { if (trusted) sendCtrl(bridge.snapshot()); }
 
 function onPhoneOnline(pubkey) {
   phonePubkey = pubkey;
-  if (pubkey && pubkey === pairing.pinnedPhone) {
+  if (pubkey && pairing.pinnedPhones.includes(pubkey)) {
     trusted = true;
     console.log("[agent] phone trusted (pinned) " + fingerprint(pubkey));
     sendSnapshot();
@@ -101,7 +106,7 @@ function onPhoneOnline(pubkey) {
 function handlePair(inner) {
   const expected = sas(pairing.code, keys.publicKey, phonePubkey);
   if (inner.tag && inner.tag === expected) {
-    pairing.pinnedPhone = phonePubkey;
+    if (!pairing.pinnedPhones.includes(phonePubkey)) pairing.pinnedPhones.push(phonePubkey);
     savePairing();
     trusted = true;
     console.log("[agent] PAIRED ✓ phone " + fingerprint(phonePubkey));

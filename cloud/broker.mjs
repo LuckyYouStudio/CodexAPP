@@ -20,6 +20,13 @@ import { WebSocketServer } from "ws";
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ACCOUNTS_FILE = path.join(__dirname, "accounts.json");
 const SECRET_FILE = path.join(__dirname, "broker.secret");
+const WEB_DIR = path.join(__dirname, "..", "web"); // broker hosts the web client
+const MIME = {
+  ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8",
+  ".css": "text/css; charset=utf-8", ".json": "application/json; charset=utf-8",
+  ".webmanifest": "application/manifest+json; charset=utf-8", ".png": "image/png",
+  ".svg": "image/svg+xml", ".ico": "image/x-icon",
+};
 const PORT = process.env.PORT || 8787;
 const HOST = process.env.HOST || "0.0.0.0";
 // TLS: set TLS_CERT + TLS_KEY (PEM paths) for wss/https; otherwise plain ws/http.
@@ -122,6 +129,16 @@ function requestHandler(req, res) {
     return;
   }
   if (req.url === "/health") { res.setHeader("content-type", "application/json"); return res.end(JSON.stringify({ ok: true, rooms: rooms.size })); }
+  // Host the web client (so users just open https://<broker>/ and log in).
+  if (req.method === "GET") {
+    const url = new URL(req.url, "http://localhost");
+    const p = url.pathname === "/" ? "/index.html" : url.pathname;
+    const filePath = path.join(WEB_DIR, path.normalize(p).replace(/^(\.\.[\\/])+/, ""));
+    if (filePath.startsWith(WEB_DIR) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
+      res.writeHead(200, { "content-type": MIME[path.extname(filePath)] || "application/octet-stream" });
+      return fs.createReadStream(filePath).pipe(res);
+    }
+  }
   res.writeHead(404); res.end("not found");
 }
 

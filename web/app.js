@@ -1,80 +1,148 @@
-// CodexApp PWA client. Talks to the relay over WebSocket; never sees Codex creds.
+// CodexApp web client. Two modes (the rest of the UI consumes the same protocol):
+//   - cloud: email account -> broker (same origin) -> E2E + pairing -> PC agent
+//   - lan:   direct WebSocket to a relay (url + token)
 "use strict";
 
 const $ = (id) => document.getElementById(id);
-const LS = {
-  url: "codexapp.url",
-  token: "codexapp.token",
-};
+const LS = { profile: "codexapp.profile", keys: "codexapp.keys" };
 
 let ws = null;
 let backoff = 1000;
 let liveAssistant = null;   // the streaming assistant bubble (or null)
 let appState = {};
 let lastDiff = "";          // latest unified diff for the current turn
+let profile = loadProfile();
+let keys = loadKeys();      // E2E keypair (cloud mode)
+let agentPub = null;        // peer (agent) public key (cloud mode)
+let paired = false;
+
+// ---------------------------------------------------------------------------
+// Profile + keys
+// ---------------------------------------------------------------------------
+function loadProfile() {
+  try { return JSON.parse(localStorage.getItem(LS.profile)) || {}; } catch { return {}; }
+}
+function saveProfile(p) { profile = p; localStorage.setItem(LS.profile, JSON.stringify(p)); }
+function loadKeys() {
+  try { const k = JSON.parse(localStorage.getItem(LS.keys)); if (k && k.publicKey) return k; } catch {}
+  const k = window.E2E.newKeyPair();
+  localStorage.setItem(LS.keys, JSON.stringify(k));
+  return k;
+}
+function profileReady(p) {
+  if (!p) return false;
+  if (p.mode === "lan") return !!(p.url && p.token);
+  if (p.mode === "cloud") return !!(p.email && p.password);
+  return false;
+}
 
 // ---------------------------------------------------------------------------
 // Boot: setup gate vs app
 // ---------------------------------------------------------------------------
-function getCreds() {
-  return {
-    url: localStorage.getItem(LS.url) || location.origin,
-    token: localStorage.getItem(LS.token) || "",
-  };
-}
-
 function start() {
-  const { url, token } = getCreds();
-  if (!token) {
-    $("setupUrl").value = url;
-    $("setup").classList.remove("hidden");
-    return;
-  }
+  if (profileReady(profile)) { showApp(); connect(); }
+  else { showSetup(); }
+}
+function showSetup() {
+  $("app").classList.add("hidden");
+  $("setup").classList.remove("hidden");
+  if (profile.email) $("cEmail").value = profile.email;
+  if (profile.url) $("setupUrl").value = profile.url;
+}
+function showApp() {
   $("setup").classList.add("hidden");
   $("app").classList.remove("hidden");
-  connect();
 }
+
+function switchTab(m) {
+  $("tabCloud").classList.toggle("on", m === "cloud");
+  $("tabLan").classList.toggle("on", m === "lan");
+  $("cloudForm").classList.toggle("hidden", m !== "cloud");
+  $("lanForm").classList.toggle("hidden", m !== "lan");
+}
+$("tabCloud").onclick = () => switchTab("cloud");
+$("tabLan").onclick = () => switchTab("lan");
+
+async function doCloud(register) {
+  const email = $("cEmail").value.trim();
+  const password = $("cPass").value;
+  const pairCode = $("cCode").value.trim().toUpperCase();
+  if (!email || !password) { $("cMsg").textContent = "请填邮箱和密码"; return; }
+  if (register) {
+    try {
+      const r = await fetch("/api/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
+      const j = await r.json().catch(() => ({}));
+      if (!r.ok && r.status !== 409) { $("cMsg").textContent = "注册失败：" + (j.error || r.status); return; }
+      if (r.status === 409) $("cMsg").textContent = "账号已存在，已为你登录";
+    } catch (e) { $("cMsg").textContent = "网络错误：" + e.message; return; }
+  }
+  saveProfile({ mode: "cloud", email, password, pairCode });
+  showApp(); connect();
+}
+$("cLogin").onclick = () => doCloud(false);
+$("cRegister").onclick = () => doCloud(true);
 
 $("setupSave").onclick = () => {
   const url = $("setupUrl").value.trim().replace(/\/+$/, "");
   const token = $("setupToken").value.trim();
   if (!url || !token) return;
-  localStorage.setItem(LS.url, url);
-  localStorage.setItem(LS.token, token);
-  $("setup").classList.add("hidden");
-  $("app").classList.remove("hidden");
-  connect();
+  saveProfile({ mode: "lan", url, token });
+  showApp(); connect();
 };
 
 // ---------------------------------------------------------------------------
-// WebSocket
+// Connection (dual transport)
 // ---------------------------------------------------------------------------
-function wsUrl() {
-  const { url, token } = getCreds();
-  return url.replace(/^http/, "ws") + "/ws?token=" + encodeURIComponent(token);
-}
-
 function connect() {
   setConn(false, "连接中…");
+  if (profile.mode === "cloud") connectCloud();
+  else connectLan();
+}
+
+function connectLan() {
   try {
-    ws = new WebSocket(wsUrl());
-  } catch (e) {
-    scheduleReconnect();
-    return;
-  }
-  ws.onopen = () => {
-    backoff = 1000;
-  };
+    ws = new WebSocket(profile.url.replace(/^http/, "ws") + "/ws?token=" + encodeURIComponent(profile.token));
+  } catch { scheduleReconnect(); return; }
+  ws.onopen = () => { backoff = 1000; };
+  ws.onmessage = (ev) => { let m; try { m = JSON.parse(ev.data); } catch { return; } handle(m); };
+  ws.onclose = (ev) => { setConn(false, ev.code === 4001 ? "Token 无效" : "已断开"); if (ev.code === 4001) { forget(); return; } scheduleReconnect(); };
+  ws.onerror = () => { try { ws.close(); } catch {} };
+}
+
+async function connectCloud() {
+  agentPub = null; paired = false;
+  let token;
+  try {
+    const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: profile.email, password: profile.password }) });
+    if (r.status === 401) { setConn(false, "账号或密码错误"); return; }
+    if (!r.ok) { scheduleReconnect(); return; }
+    token = (await r.json()).token;
+  } catch { scheduleReconnect(); return; }
+
+  try { ws = new WebSocket(location.origin.replace(/^http/, "ws") + "/link"); }
+  catch { scheduleReconnect(); return; }
+  ws.onopen = () => { backoff = 1000; ws.send(JSON.stringify({ type: "auth", token, role: "phone", pubkey: keys.publicKey })); };
   ws.onmessage = (ev) => {
-    let m;
-    try { m = JSON.parse(ev.data); } catch { return; }
-    handle(m);
+    let m; try { m = JSON.parse(ev.data); } catch { return; }
+    if (m.type === "authed") { setConn(false, "等待电脑 Agent…"); if (m.peerOnline && m.peerPubkey) agentPub = m.peerPubkey; return; }
+    if (m.type === "peer") { agentPub = m.online ? m.pubkey : null; if (!m.online) { paired = false; appState.codexConnected = false; applyState(); } return; }
+    if (m.type === "e2e") {
+      const inner = window.E2E.open(m, agentPub, keys.secretKey);
+      if (!inner) return;
+      if (inner.type === "needPairing") {
+        if (profile.pairCode && agentPub) {
+          ws.send(JSON.stringify({ type: "e2e", ...window.E2E.seal({ type: "pair", tag: window.E2E.sas(profile.pairCode, agentPub, keys.publicKey) }, agentPub, keys.secretKey) }));
+        } else { setConn(false, "需要配对码"); }
+        return;
+      }
+      if (inner.type === "paired") { if (inner.ok) paired = true; else setConn(false, "配对失败：" + (inner.reason || "")); return; }
+      if (inner.type === "hello") paired = true;
+      handle(inner);
+      return;
+    }
+    if (m.type === "error") { if (/token|invalid/i.test(m.message || "")) setConn(false, "登录失效"); return; }
   };
-  ws.onclose = (ev) => {
-    setConn(false, ev.code === 4001 ? "Token 无效" : "已断开");
-    if (ev.code === 4001) { forget(); return; }
-    scheduleReconnect();
-  };
+  ws.onclose = () => { setConn(false, "已断开"); scheduleReconnect(); };
   ws.onerror = () => { try { ws.close(); } catch {} };
 }
 
@@ -84,7 +152,13 @@ function scheduleReconnect() {
 }
 
 function sendWs(obj) {
-  if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify(obj));
+  if (!ws || ws.readyState !== WebSocket.OPEN) return;
+  if (profile.mode === "cloud") {
+    if (!agentPub) return;
+    ws.send(JSON.stringify({ type: "e2e", ...window.E2E.seal(obj, agentPub, keys.secretKey) }));
+  } else {
+    ws.send(JSON.stringify(obj));
+  }
 }
 
 // ---------------------------------------------------------------------------
@@ -144,7 +218,8 @@ function setConn(ok, label) {
 }
 
 function applyState() {
-  const connected = !!(ws && ws.readyState === WebSocket.OPEN) && appState.codexConnected;
+  const connected = !!(ws && ws.readyState === WebSocket.OPEN) && appState.codexConnected
+    && (profile.mode !== "cloud" || (!!agentPub && paired));
   $("connDot").classList.toggle("on", connected);
   const running = appState.status === "running";
   const pill = $("statusPill");
@@ -315,7 +390,7 @@ $("newThreadBtn").onclick = () => {
   $("sheet").classList.add("hidden");
 };
 function forget() {
-  localStorage.removeItem(LS.token);
+  localStorage.removeItem(LS.profile); // keep keys so the device stays paired
   location.reload();
 }
 $("forget").onclick = forget;
