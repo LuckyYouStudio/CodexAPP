@@ -19,6 +19,7 @@ import { WebSocketServer } from "ws";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ACCOUNTS_FILE = path.join(__dirname, "accounts.json");
+const SECRET_FILE = path.join(__dirname, "broker.secret");
 const PORT = process.env.PORT || 8787;
 const HOST = process.env.HOST || "0.0.0.0";
 // TLS: set TLS_CERT + TLS_KEY (PEM paths) for wss/https; otherwise plain ws/http.
@@ -27,22 +28,49 @@ const TLS_KEY = process.env.TLS_KEY;
 // Dev convenience: auto-create an account on first login. Disable in prod.
 const ALLOW_AUTOREGISTER = process.env.ALLOW_AUTOREGISTER !== "0";
 
-// ---- accounts (minimal; replace with a real DB + JWT in production) ----
+// ---- accounts + signed tokens (file-backed; swap for a real DB in production) ----
 function loadAccounts() {
   try { return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf8")); } catch { return {}; }
 }
 function saveAccounts(a) { fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(a, null, 2)); }
 const accounts = loadAccounts(); // email -> { accountId, salt, hash }
-const tokens = new Map();        // sessionToken -> accountId
 
-function hashPw(password, salt) {
-  return crypto.scryptSync(password, salt, 32).toString("hex");
+// Server secret signs tokens; persisted so tokens survive broker restarts.
+function loadSecret() {
+  try { return fs.readFileSync(SECRET_FILE); } catch {}
+  const s = crypto.randomBytes(32);
+  fs.writeFileSync(SECRET_FILE, s);
+  return s;
 }
+const SECRET = loadSecret();
+const TOKEN_TTL_SEC = 30 * 24 * 3600; // 30 days
+
+function signToken(accountId) {
+  const payload = Buffer.from(JSON.stringify({ sub: accountId, exp: Math.floor(Date.now() / 1000) + TOKEN_TTL_SEC })).toString("base64url");
+  const sig = crypto.createHmac("sha256", SECRET).update(payload).digest("base64url");
+  return payload + "." + sig;
+}
+function verifyToken(token) {
+  if (typeof token !== "string" || !token.includes(".")) return null;
+  const [payload, sig] = token.split(".");
+  if (!payload || !sig) return null;
+  const expect = crypto.createHmac("sha256", SECRET).update(payload).digest("base64url");
+  if (sig.length !== expect.length || !crypto.timingSafeEqual(Buffer.from(sig), Buffer.from(expect))) return null;
+  let p; try { p = JSON.parse(Buffer.from(payload, "base64url").toString()); } catch { return null; }
+  if (!p.sub || !p.exp || p.exp < Math.floor(Date.now() / 1000)) return null;
+  return p.sub;
+}
+
+function hashPw(password, salt) { return crypto.scryptSync(password, salt, 32).toString("hex"); }
+function validEmail(e) { return typeof e === "string" && e.length <= 254 && /^[^@\s]+@[^@\s]+\.[^@\s]+$/.test(e); }
+function validPassword(p) { return typeof p === "string" && p.length >= 8 && p.length <= 200; }
+function eq(a, b) { return a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)); }
+
 function register(email, password) {
   if (accounts[email]) return null;
   const salt = crypto.randomBytes(16).toString("hex");
   const accountId = crypto.randomUUID();
-  accounts[email] = { accountId, salt, hash: hashPw(password, salt) };
+  accounts[email] = { accountId, salt, hash: hashPw(password, salt), createdAt: Date.now() };
   saveAccounts(accounts);
   return accountId;
 }
@@ -50,10 +78,19 @@ function login(email, password) {
   let acc = accounts[email];
   if (!acc && ALLOW_AUTOREGISTER) { register(email, password); acc = accounts[email]; }
   if (!acc) return null;
-  if (hashPw(password, acc.salt) !== acc.hash) return null;
-  const token = crypto.randomBytes(24).toString("base64url");
-  tokens.set(token, acc.accountId);
-  return { token, accountId: acc.accountId };
+  if (!eq(hashPw(password, acc.salt), acc.hash)) return null;
+  return { token: signToken(acc.accountId), accountId: acc.accountId };
+}
+
+// ---- login/register rate limiting (per IP+email sliding window) ----
+const attempts = new Map();
+const RL_WINDOW = 15 * 60 * 1000, RL_MAX = 8;
+function rateLimited(key) {
+  const now = Date.now();
+  const arr = (attempts.get(key) || []).filter((t) => now - t < RL_WINDOW);
+  arr.push(now);
+  attempts.set(key, arr);
+  return arr.length > RL_MAX;
 }
 
 // ---- routing: accountId -> { agent, phone } (one of each for v1) ----
@@ -64,19 +101,22 @@ const peerRole = (r) => (r === "agent" ? "phone" : "agent");
 // ---- HTTP(S) (auth endpoints) ----
 function requestHandler(req, res) {
   if (req.method === "POST" && (req.url === "/api/login" || req.url === "/api/register")) {
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").toString().split(",")[0].trim();
     let body = "";
-    req.on("data", (c) => (body += c));
+    req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
     req.on("end", () => {
       let p; try { p = JSON.parse(body || "{}"); } catch { p = {}; }
       res.setHeader("content-type", "application/json");
-      if (!p.email || !p.password) { res.writeHead(400); return res.end(JSON.stringify({ error: "email/password required" })); }
+      if (!validEmail(p.email)) { res.writeHead(400); return res.end(JSON.stringify({ error: "无效邮箱" })); }
+      if (!validPassword(p.password)) { res.writeHead(400); return res.end(JSON.stringify({ error: "密码至少 8 位" })); }
+      if (rateLimited(ip + "|" + p.email)) { res.writeHead(429); return res.end(JSON.stringify({ error: "尝试过于频繁，请稍后再试" })); }
       if (req.url === "/api/register") {
         const id = register(p.email, p.password);
-        if (!id) { res.writeHead(409); return res.end(JSON.stringify({ error: "exists" })); }
+        if (!id) { res.writeHead(409); return res.end(JSON.stringify({ error: "账号已存在" })); }
         return res.end(JSON.stringify({ accountId: id }));
       }
       const r = login(p.email, p.password);
-      if (!r) { res.writeHead(401); return res.end(JSON.stringify({ error: "invalid credentials" })); }
+      if (!r) { res.writeHead(401); return res.end(JSON.stringify({ error: "邮箱或密码错误" })); }
       res.end(JSON.stringify(r));
     });
     return;
@@ -105,7 +145,7 @@ wss.on("connection", (ws) => {
     // First message must authenticate.
     if (!ws.accountId) {
       if (m.type !== "auth") { sendJson(ws, { type: "error", message: "auth required" }); return ws.close(4001); }
-      const accountId = tokens.get(m.token);
+      const accountId = verifyToken(m.token);
       if (!accountId) { sendJson(ws, { type: "error", message: "invalid token" }); return ws.close(4001); }
       if (m.role !== "agent" && m.role !== "phone") { sendJson(ws, { type: "error", message: "bad role" }); return ws.close(4002); }
       ws.accountId = accountId; ws.role = m.role; ws.pubkey = m.pubkey || null;

@@ -7,6 +7,8 @@ cloud/agent.keys.json
 cloud/agent.pairing.json
 cloud/pairing-code.txt
 cloud/accounts.json
+cloud/broker.secret
+cloud/.last-token.txt
 cloud/certs/
 **/*.pem
 
