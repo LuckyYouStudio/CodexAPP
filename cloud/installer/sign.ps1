@@ -15,6 +15,8 @@ $signtool = Get-ChildItem "C:\Program Files (x86)\Windows Kits\10\bin\*\x64\sign
 if (-not $signtool) { Write-Host "signtool.exe not found - install the Windows 10/11 SDK." -ForegroundColor Red; exit 1 }
 if (-not (Test-Path $Exe)) { Write-Host "Exe not found: $Exe  (build it first: node cloud/build-agent.mjs)" -ForegroundColor Red; exit 1 }
 
+Write-Host "Removing any stale signature ..."
+& $signtool.FullName remove /s $Exe 2>$null  # SEA exes carry a corrupted base sig; harmless if none
 Write-Host "Signing $Exe ..."
 & $signtool.FullName sign /f $PfxPath /p $Password /fd SHA256 /tr $TimestampUrl /td SHA256 $Exe
 Write-Host "Verifying ..."

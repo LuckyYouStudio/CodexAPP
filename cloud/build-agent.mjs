@@ -46,6 +46,23 @@ execFileSync(process.execPath, ["--experimental-sea-config", SEA_CFG], { stdio: 
 console.log("[build] copying node runtime -> exe...");
 fs.copyFileSync(process.execPath, EXE);
 
+// Strip node.exe's Authenticode signature BEFORE injecting; otherwise postject
+// corrupts it and the result can't be (re)signed later (signtool 0x800700C1).
+function findSigntool() {
+  const base = "C:\\Program Files (x86)\\Windows Kits\\10\\bin";
+  try {
+    return fs.readdirSync(base).map((d) => path.join(base, d, "x64", "signtool.exe"))
+      .filter((p) => fs.existsSync(p)).sort().reverse()[0] || null;
+  } catch { return null; }
+}
+const signtool = findSigntool();
+if (signtool) {
+  try { execFileSync(signtool, ["remove", "/s", EXE], { stdio: "ignore" }); console.log("[build] stripped base signature"); }
+  catch { /* node.exe may already be unsigned in some builds */ }
+} else {
+  console.log("[build] (signtool not found — skipping pre-strip; install Windows SDK if you'll code-sign)");
+}
+
 console.log("[build] injecting blob with postject...");
 execFileSync(process.execPath, [
   path.join(ROOT, "node_modules", "postject", "dist", "cli.js"),
