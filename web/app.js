@@ -53,6 +53,12 @@ function showApp() {
   $("setup").classList.add("hidden");
   $("app").classList.remove("hidden");
 }
+function loginFailed(msg, resend) {
+  showSetup();
+  switchTab("cloud");
+  $("cMsg").textContent = msg;
+  if (resend) $("cResend").classList.remove("hidden");
+}
 
 function switchTab(m) {
   $("tabCloud").classList.toggle("on", m === "cloud");
@@ -72,8 +78,13 @@ async function doCloud(register) {
     try {
       const r = await fetch("/api/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
       const j = await r.json().catch(() => ({}));
-      if (!r.ok && r.status !== 409) { $("cMsg").textContent = "注册失败：" + (j.error || r.status); return; }
-      if (r.status === 409) $("cMsg").textContent = "账号已存在，已为你登录";
+      if (r.status === 409) { $("cMsg").textContent = "账号已存在，请直接登录。"; return; }
+      if (!r.ok) { $("cMsg").textContent = "注册失败：" + (j.error || r.status); return; }
+      $("cMsg").textContent = j.emailSent
+        ? "✅ 验证邮件已发送，请查收并点击链接，然后回来登录。"
+        : "账号已创建。SMTP 未配置：请在服务器日志里找到验证链接打开后再登录。";
+      $("cResend").classList.remove("hidden");
+      return; // wait for email verification, then the user logs in
     } catch (e) { $("cMsg").textContent = "网络错误：" + e.message; return; }
   }
   saveProfile({ mode: "cloud", email, password, pairCode });
@@ -81,6 +92,12 @@ async function doCloud(register) {
 }
 $("cLogin").onclick = () => doCloud(false);
 $("cRegister").onclick = () => doCloud(true);
+$("cResend").onclick = async () => {
+  const email = $("cEmail").value.trim();
+  if (!email) { $("cMsg").textContent = "请填邮箱"; return; }
+  try { await fetch("/api/resend-verification", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) }); } catch {}
+  $("cMsg").textContent = "若该邮箱已注册，验证邮件已重新发送，请查收。";
+};
 
 $("setupSave").onclick = () => {
   const url = $("setupUrl").value.trim().replace(/\/+$/, "");
@@ -114,7 +131,8 @@ async function connectCloud() {
   let token;
   try {
     const r = await fetch("/api/login", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: profile.email, password: profile.password }) });
-    if (r.status === 401) { setConn(false, "账号或密码错误"); return; }
+    if (r.status === 401) { loginFailed("账号或密码错误"); return; }
+    if (r.status === 403) { loginFailed("请先验证邮箱（注册后点邮件里的链接）", true); return; }
     if (!r.ok) { scheduleReconnect(); return; }
     token = (await r.json()).token;
   } catch { scheduleReconnect(); return; }

@@ -16,6 +16,8 @@ import path from "node:path";
 import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+import * as db from "./db.mjs";
+import { sendVerifyEmail, emailConfigured } from "./mailer.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ACCOUNTS_FILE = path.join(__dirname, "accounts.json");
@@ -33,14 +35,16 @@ const HOST = process.env.HOST || "0.0.0.0";
 const TLS_CERT = process.env.TLS_CERT;
 const TLS_KEY = process.env.TLS_KEY;
 // Dev convenience: auto-create an account on first login. Disable in prod.
-const ALLOW_AUTOREGISTER = process.env.ALLOW_AUTOREGISTER !== "0";
-
-// ---- accounts + signed tokens (file-backed; swap for a real DB in production) ----
-function loadAccounts() {
-  try { return JSON.parse(fs.readFileSync(ACCOUNTS_FILE, "utf8")); } catch { return {}; }
+// ---- accounts (SQLite) + signed tokens + email verification ----
+const migrated = db.migrateFromJson(ACCOUNTS_FILE); // one-time import from legacy accounts.json
+if (migrated) console.log(`[broker] migrated ${migrated} accounts from accounts.json -> SQLite`);
+const VERIFY_TTL_MS = 24 * 3600 * 1000;
+const newVerifyToken = () => crypto.randomBytes(24).toString("base64url");
+function baseUrl(req) {
+  if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/+$/, "");
+  const proto = req.headers["x-forwarded-proto"] || (req.socket.encrypted ? "https" : "http");
+  return `${proto}://${req.headers.host}`;
 }
-function saveAccounts(a) { fs.writeFileSync(ACCOUNTS_FILE, JSON.stringify(a, null, 2)); }
-const accounts = loadAccounts(); // email -> { accountId, salt, hash }
 
 // Server secret signs tokens; persisted so tokens survive broker restarts.
 function loadSecret() {
@@ -74,19 +78,25 @@ function validPassword(p) { return typeof p === "string" && p.length >= 8 && p.l
 function eq(a, b) { return a.length === b.length && crypto.timingSafeEqual(Buffer.from(a), Buffer.from(b)); }
 
 function register(email, password) {
-  if (accounts[email]) return null;
+  if (db.getByEmail(email)) return { error: "exists" };
+  const id = crypto.randomUUID();
   const salt = crypto.randomBytes(16).toString("hex");
-  const accountId = crypto.randomUUID();
-  accounts[email] = { accountId, salt, hash: hashPw(password, salt), createdAt: Date.now() };
-  saveAccounts(accounts);
-  return accountId;
+  const token = newVerifyToken();
+  db.createAccount({ id, email, salt, hash: hashPw(password, salt), email_verified: 0, verify_token: token, verify_expires: Date.now() + VERIFY_TTL_MS, created_at: Date.now() });
+  return { accountId: id, verifyToken: token };
 }
 function login(email, password) {
-  let acc = accounts[email];
-  if (!acc && ALLOW_AUTOREGISTER) { register(email, password); acc = accounts[email]; }
-  if (!acc) return null;
-  if (!eq(hashPw(password, acc.salt), acc.hash)) return null;
-  return { token: signToken(acc.accountId), accountId: acc.accountId };
+  const acc = db.getByEmail(email);
+  if (!acc || !eq(hashPw(password, acc.salt), acc.hash)) return { ok: false, code: "invalid" };
+  if (!acc.email_verified) return { ok: false, code: "unverified" };
+  return { ok: true, token: signToken(acc.id), accountId: acc.id };
+}
+function issueVerify(email) {
+  const acc = db.getByEmail(email);
+  if (!acc || acc.email_verified) return null;
+  const token = newVerifyToken();
+  db.setVerifyToken(acc.id, token, Date.now() + VERIFY_TTL_MS);
+  return token;
 }
 
 // ---- login/register rate limiting (per IP+email sliding window) ----
@@ -105,29 +115,63 @@ const rooms = new Map();
 function room(id) { if (!rooms.has(id)) rooms.set(id, { agent: null, phone: null }); return rooms.get(id); }
 const peerRole = (r) => (r === "agent" ? "phone" : "agent");
 
-// ---- HTTP(S) (auth endpoints) ----
+function verifyPage(title, msg) {
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>CodexApp</title>
+<body style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#0b1220;color:#e6ecf7;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0">
+<div style="max-width:420px;padding:32px;text-align:center">
+<h1 style="font-size:22px">${title}</h1><p style="color:#8a98b8">${msg}</p>
+<a href="/" style="display:inline-block;margin-top:16px;background:#35d07f;color:#042;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:700">打开 CodexApp</a>
+</div></body>`;
+}
+
+// ---- HTTP(S) (auth + verification + web hosting) ----
 function requestHandler(req, res) {
-  if (req.method === "POST" && (req.url === "/api/login" || req.url === "/api/register")) {
+  if (req.method === "POST" && (req.url === "/api/login" || req.url === "/api/register" || req.url === "/api/resend-verification")) {
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").toString().split(",")[0].trim();
     let body = "";
     req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
-    req.on("end", () => {
+    req.on("end", async () => {
       let p; try { p = JSON.parse(body || "{}"); } catch { p = {}; }
       res.setHeader("content-type", "application/json");
       if (!validEmail(p.email)) { res.writeHead(400); return res.end(JSON.stringify({ error: "无效邮箱" })); }
-      if (!validPassword(p.password)) { res.writeHead(400); return res.end(JSON.stringify({ error: "密码至少 8 位" })); }
       if (rateLimited(ip + "|" + p.email)) { res.writeHead(429); return res.end(JSON.stringify({ error: "尝试过于频繁，请稍后再试" })); }
-      if (req.url === "/api/register") {
-        const id = register(p.email, p.password);
-        if (!id) { res.writeHead(409); return res.end(JSON.stringify({ error: "账号已存在" })); }
-        return res.end(JSON.stringify({ accountId: id }));
+
+      if (req.url === "/api/resend-verification") {
+        const token = issueVerify(p.email);
+        if (token) { try { await sendVerifyEmail(p.email, baseUrl(req) + "/verify?token=" + token); } catch (e) { console.error("[mail]", e.message); } }
+        return res.end(JSON.stringify({ ok: true })); // don't reveal whether the account exists
       }
+
+      if (!validPassword(p.password)) { res.writeHead(400); return res.end(JSON.stringify({ error: "密码至少 8 位" })); }
+
+      if (req.url === "/api/register") {
+        const r = register(p.email, p.password);
+        if (r.error === "exists") { res.writeHead(409); return res.end(JSON.stringify({ error: "账号已存在" })); }
+        try { await sendVerifyEmail(p.email, baseUrl(req) + "/verify?token=" + r.verifyToken); } catch (e) { console.error("[mail]", e.message); }
+        return res.end(JSON.stringify({ ok: true, needVerify: true, emailSent: emailConfigured }));
+      }
+
       const r = login(p.email, p.password);
-      if (!r) { res.writeHead(401); return res.end(JSON.stringify({ error: "邮箱或密码错误" })); }
-      res.end(JSON.stringify(r));
+      if (!r.ok && r.code === "unverified") { res.writeHead(403); return res.end(JSON.stringify({ error: "请先验证邮箱（查收验证邮件）", code: "unverified" })); }
+      if (!r.ok) { res.writeHead(401); return res.end(JSON.stringify({ error: "邮箱或密码错误" })); }
+      res.end(JSON.stringify({ token: r.token, accountId: r.accountId }));
     });
     return;
   }
+
+  // Email verification link.
+  if (req.method === "GET" && req.url.startsWith("/verify")) {
+    const url = new URL(req.url, "http://localhost");
+    const acc = url.searchParams.get("token") && db.getByVerifyToken(url.searchParams.get("token"));
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    if (acc && (!acc.verify_expires || acc.verify_expires > Date.now())) {
+      db.setVerified(acc.id);
+      return res.end(verifyPage("✅ 邮箱验证成功", "账号已激活，现在可以在网页或 App 登录了。"));
+    }
+    res.writeHead(400);
+    return res.end(verifyPage("⚠ 链接无效或已过期", "请回到登录页重新发送验证邮件。"));
+  }
+
   if (req.url === "/health") { res.setHeader("content-type", "application/json"); return res.end(JSON.stringify({ ok: true, rooms: rooms.size })); }
   // Host the web client (so users just open https://<broker>/ and log in).
   if (req.method === "GET") {
@@ -200,5 +244,5 @@ wss.on("connection", (ws) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`CodexApp broker [${scheme}] on ${HOST}:${PORT}  (POST /api/login, WS /link)  autoRegister=${ALLOW_AUTOREGISTER}`);
+  console.log(`CodexApp broker [${scheme}] on ${HOST}:${PORT}  email=${emailConfigured ? "SMTP" : "console-log (dev)"}`);
 });

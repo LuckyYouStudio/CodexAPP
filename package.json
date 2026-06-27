@@ -9,6 +9,7 @@
     "probe": "node relay/probe.mjs"
   },
   "dependencies": {
+    "nodemailer": "^9.0.1",
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
     "ws": "^8.18.0"

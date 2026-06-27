@@ -6,7 +6,8 @@
 
 - 一台 VPS（1 核 512MB 起步就够，Broker 很轻）
 - 一个域名指向它，例如 `broker.yourdomain.com`
-- Node ≥ 18
+- **Node ≥ 22**（Broker 用内置 `node:sqlite` 存账号）
+- 一个发信渠道（SMTP / SendGrid / Mailgun / SES…）用于发验证邮件
 
 ## 方式 A：Caddy 自动 HTTPS（推荐，最省事）
 
@@ -21,7 +22,7 @@ broker.yourdomain.com {
 
 Broker 本地起（明文，仅监听本机）：
 ```bash
-HOST=127.0.0.1 PORT=8787 ALLOW_AUTOREGISTER=0 node cloud/broker.mjs
+HOST=127.0.0.1 PORT=8787 PUBLIC_URL=https://broker.yourdomain.com node cloud/broker.mjs
 ```
 Caddy 负责对外的 `https/wss`。WebSocket 升级 Caddy 默认透传，无需额外配置。
 
@@ -30,7 +31,7 @@ Caddy 负责对外的 `https/wss`。WebSocket 升级 Caddy 默认透传，无需
 用 certbot 拿证书，直接让 Broker 监听 443：
 ```bash
 sudo certbot certonly --standalone -d broker.yourdomain.com
-sudo HOST=0.0.0.0 PORT=443 ALLOW_AUTOREGISTER=0 \
+sudo HOST=0.0.0.0 PORT=443 PUBLIC_URL=https://broker.yourdomain.com \
   TLS_CERT=/etc/letsencrypt/live/broker.yourdomain.com/fullchain.pem \
   TLS_KEY=/etc/letsencrypt/live/broker.yourdomain.com/privkey.pem \
   node cloud/broker.mjs
@@ -47,7 +48,8 @@ After=network.target
 
 [Service]
 WorkingDirectory=/opt/codexapp
-Environment=HOST=127.0.0.1 PORT=8787 ALLOW_AUTOREGISTER=0
+Environment=HOST=127.0.0.1 PORT=8787 PUBLIC_URL=https://broker.yourdomain.com
+Environment=SMTP_HOST=smtp.yourprovider.com SMTP_PORT=587 SMTP_USER=apikey SMTP_PASS=*** SMTP_FROM=no-reply@yourdomain.com
 ExecStart=/usr/bin/node cloud/broker.mjs
 Restart=always
 User=codexapp
@@ -71,15 +73,25 @@ sudo systemctl enable --now codexapp-broker
 | `HOST` | `0.0.0.0` | 监听地址（Caddy 模式设 `127.0.0.1`） |
 | `PORT` | `8787` | 端口 |
 | `TLS_CERT` / `TLS_KEY` | 空 | PEM 路径；都设了才走 https/wss，否则 http/ws |
-| `ALLOW_AUTOREGISTER` | `1` | **生产必须设 `0`**：关闭"登录即自动注册" |
+| `PUBLIC_URL` | 自动推断 | 验证邮件里链接的域名，例 `https://broker.yourdomain.com`（Caddy 后建议显式设） |
+| `DB_PATH` | `cloud/codexapp.db` | SQLite 账号库路径 |
+| `SMTP_HOST` / `SMTP_PORT` | 空 | 发信服务器；**不设则验证链接只打到日志**（dev） |
+| `SMTP_USER` / `SMTP_PASS` | 空 | 发信认证 |
+| `SMTP_FROM` | = `SMTP_USER` | 发件人地址 |
+
+示例（带发信）：
+```bash
+HOST=127.0.0.1 PORT=8787 PUBLIC_URL=https://broker.yourdomain.com \
+  SMTP_HOST=smtp.sendgrid.net SMTP_PORT=587 SMTP_USER=apikey SMTP_PASS=*** \
+  SMTP_FROM="CodexApp <no-reply@yourdomain.com>" node cloud/broker.mjs
+```
 
 ## 生产清单（重要）
 
-- **关闭 autoregister**（`ALLOW_AUTOREGISTER=0`），改用正式注册流程。
-- 现在的账号库是最简 `accounts.json` + 内存 token：生产请换**数据库 + JWT/刷新令牌 + 邮箱验证**，并给登录加**速率限制**。
+- **配 SMTP**（否则验证邮件发不出去，用户无法激活）。本地不配时验证链接会打到 Broker 日志，仅供测试。
+- 账号库已是 **SQLite + JWT（带过期）+ 邮箱验证 + 登录限流**。备份 `codexapp.db` 和 `broker.secret`。
 - 防火墙只放行 443（和 SSH）。
-- `accounts.json` 当敏感数据备份/保护。
 - Broker 看不到用户内容（端到端加密），但它是配对路由点——保证它本身不被入侵。
-- 仍待接入：APNs 推送（审批提醒）、计费/订阅。
+- 仍待接入：找回密码、APNs 推送（审批提醒）、计费/订阅。
 
 > 端到端加密 + 配对码已在协议层做好：即使 Broker 被攻破，也读不到内容，也无法冒充 Agent（配对码 SAS 校验）。详见 [README.md](README.md)。
