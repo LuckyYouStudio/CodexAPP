@@ -9,6 +9,17 @@
 - **Node ≥ 22**（Broker 用内置 `node:sqlite` 存账号）
 - 一个发信渠道（SMTP / SendGrid / Mailgun / SES…）用于发验证邮件
 
+## 一键部署（推荐）
+
+在服务器上(域名 DNS 已指向它),用 root 运行:
+```bash
+curl -fsSL https://raw.githubusercontent.com/LuckyYouStudio/CodexAPP/main/cloud/deploy.sh -o deploy.sh
+sudo bash deploy.sh        # 按提示填:域名、管理员邮箱、SMTP
+```
+脚本自动:装 Node22 + Caddy → 拉代码 → 配 `/etc/codexapp/broker.env` → systemd 常驻 Broker → Caddy 自动 HTTPS。完成后访问 `https://你的域名/` 即网页客户端。再次运行 = 更新代码 + 重启。
+
+下面是手动步骤(想自己控制时参考)。
+
 ## 方式 A：Caddy 自动 HTTPS（推荐，最省事）
 
 让 Caddy 反向代理并自动签 Let's Encrypt 证书，Broker 本身只在本地跑明文。
