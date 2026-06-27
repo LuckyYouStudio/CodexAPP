@@ -138,6 +138,22 @@ function approvalResult(method, optionId) {
   }
 }
 
+// Convert a historical thread item into a feed event (or null to skip).
+function itemToEvent(it) {
+  switch (it.type) {
+    case "userMessage": {
+      const text = (it.content || []).filter((c) => c.type === "text").map((c) => c.text).join("").trim();
+      return text ? { kind: "user", text } : null;
+    }
+    case "agentMessage": return it.text ? { kind: "item:agentMessage", text: it.text } : null;
+    case "commandExecution": return { kind: "item:commandExecution", text: "$ " + it.command + (it.exitCode != null ? `  →  exit ${it.exitCode}` : "") };
+    case "fileChange": return { kind: "item:fileChange", text: "已改动文件: " + (it.changes || []).map((c) => c.path || "?").join(", ") };
+    case "webSearch": return { kind: "item:webSearch", text: "🔍 " + (it.query || "") };
+    case "mcpToolCall": return { kind: "item:mcpToolCall", text: `工具: ${it.server}/${it.tool}` };
+    default: return null;
+  }
+}
+
 export class CodexBridge {
   constructor(config, emit) {
     this.config = config;
@@ -381,8 +397,20 @@ export class CodexBridge {
     this.state.cwd = t.cwd || this.state.cwd;
     this.state.turnId = null; this.state.status = "idle"; this.state.lastDiff = "";
     this.state.threadName = t.name || t.preview || null;
-    this.emit({ type: "diff", diff: "" });
-    this._pushEvent({ kind: "thread", text: `已接续会话「${this.state.threadName || this.state.threadId}」@ ${this.state.cwd}` });
-    this._broadcastState();
+    // Rebuild the feed from the conversation's history so clients show the same
+    // messages Codex shows.
+    const events = [];
+    let n = 0;
+    for (const turn of t.turns || []) {
+      const base = turn.startedAt ? turn.startedAt * 1000 : Date.now();
+      for (const it of turn.items || []) {
+        const e = itemToEvent(it);
+        if (e) events.push({ id: crypto.randomUUID(), ts: base + n++, ...e });
+      }
+    }
+    events.push({ id: crypto.randomUUID(), ts: Date.now(), kind: "thread", text: `— 已接续会话「${this.state.threadName || this.state.threadId}」@ ${this.state.cwd} —` });
+    this.eventLog.length = 0;
+    this.eventLog.push(...events.slice(-EVENT_LOG_CAP));
+    this.emit(this.snapshot());
   }
 }

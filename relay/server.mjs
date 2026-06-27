@@ -63,6 +63,8 @@ function loadConfig() {
   } else if (!fs.existsSync(CONFIG_PATH)) {
     fs.writeFileSync(CONFIG_PATH, JSON.stringify(cfg, null, 2));
   }
+  if (process.env.PORT) cfg.port = Number(process.env.PORT);
+  if (process.env.HOST) cfg.host = process.env.HOST;
   return cfg;
 }
 
@@ -549,7 +551,24 @@ async function listThreads() {
   return data;
 }
 
-// Resume an existing conversation (continue a desktop/CLI session in its project).
+// Convert a historical thread item into a feed event (or null to skip).
+function itemToEvent(it) {
+  switch (it.type) {
+    case "userMessage": {
+      const text = (it.content || []).filter((c) => c.type === "text").map((c) => c.text).join("").trim();
+      return text ? { kind: "user", text } : null;
+    }
+    case "agentMessage": return it.text ? { kind: "item:agentMessage", text: it.text } : null;
+    case "commandExecution": return { kind: "item:commandExecution", text: "$ " + it.command + (it.exitCode != null ? `  →  exit ${it.exitCode}` : "") };
+    case "fileChange": return { kind: "item:fileChange", text: "已改动文件: " + (it.changes || []).map((c) => c.path || "?").join(", ") };
+    case "webSearch": return { kind: "item:webSearch", text: "🔍 " + (it.query || "") };
+    case "mcpToolCall": return { kind: "item:mcpToolCall", text: `工具: ${it.server}/${it.tool}` };
+    default: return null;
+  }
+}
+
+// Resume an existing conversation AND load its history so clients show the
+// same messages Codex shows. Rebuilds the feed from thread.turns[].items[].
 async function resumeThread(threadId) {
   const res = await codex.request("thread/resume", {
     threadId,
@@ -563,9 +582,23 @@ async function resumeThread(threadId) {
   state.status = "idle";
   state.lastDiff = "";
   state.threadName = t.name || t.preview || null;
-  broadcast({ type: "diff", diff: "" });
-  pushEvent({ kind: "thread", text: `已接续会话「${state.threadName || state.threadId}」@ ${state.cwd}` });
-  broadcastState();
+
+  // Rebuild the feed from the conversation's history.
+  const events = [];
+  let n = 0;
+  for (const turn of t.turns || []) {
+    const base = turn.startedAt ? turn.startedAt * 1000 : Date.now();
+    for (const it of turn.items || []) {
+      const e = itemToEvent(it);
+      if (e) events.push({ id: crypto.randomUUID(), ts: base + n++, ...e });
+    }
+  }
+  events.push({ id: crypto.randomUUID(), ts: Date.now(), kind: "thread", text: `— 已接续会话「${state.threadName || state.threadId}」@ ${state.cwd} —` });
+  eventLog.length = 0;
+  eventLog.push(...events.slice(-EVENT_LOG_CAP));
+
+  // Push a fresh snapshot so every client repopulates its feed with the history.
+  broadcast(snapshot());
 }
 
 // ---------------------------------------------------------------------------
