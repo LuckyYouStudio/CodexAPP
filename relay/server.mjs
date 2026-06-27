@@ -41,6 +41,10 @@ const DEFAULT_CONFIG = {
   sandbox: "workspace-write",
   // Optional model override (null = use Codex default from config.toml).
   model: null,
+  // Client identifier (originator) Codex reports upstream. Some API relays only
+  // accept "official" Codex clients; the relay drives the official app-server, so
+  // it identifies as one. Override if your provider expects a different value.
+  originator: "codex_vscode",
 };
 
 function loadConfig() {
@@ -440,7 +444,7 @@ codex.onNotification = handleNotification;
 // ---------------------------------------------------------------------------
 async function bootstrapCodex() {
   const res = await codex.request("initialize", {
-    clientInfo: { name: "codexapp-relay", title: "CodexApp Relay", version: "0.1.0" },
+    clientInfo: { name: config.originator || "codex_vscode", title: "CodexApp Relay", version: "0.1.0" },
     capabilities: null,
   });
   codex.notify("initialized");

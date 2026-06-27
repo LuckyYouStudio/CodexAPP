@@ -34,6 +34,7 @@ const PAIRING_TXT = path.join(BASE, "pairing-code.txt");
 const DEFAULTS = {
   brokerUrl: "http://127.0.0.1:8787", email: "", password: "", codexBin: "",
   defaultCwd: "C:\\test", approvalPolicy: "on-request", sandbox: "workspace-write", model: null,
+  originator: "codex_vscode",
 };
 
 function loadConfig() {

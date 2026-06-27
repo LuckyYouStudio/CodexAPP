@@ -182,7 +182,7 @@ export class CodexBridge {
 
   async _bootstrap() {
     const res = await this.codex.request("initialize", {
-      clientInfo: { name: "codexapp-agent", title: "CodexApp Agent", version: "0.1.0" },
+      clientInfo: { name: this.config.originator || "codex_vscode", title: "CodexApp Agent", version: "0.1.0" },
       capabilities: null,
     });
     this.codex.notify("initialized");
