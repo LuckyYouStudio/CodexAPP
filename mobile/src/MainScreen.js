@@ -55,7 +55,7 @@ function EventRow({ e }) {
 }
 
 export default function MainScreen({ relay, onForget }) {
-  const { conn, connected, cloud, agentFp, relayState, config, events, approvals, diff, threads, actions } = relay;
+  const { conn, connected, cloud, agentFp, relayState, config, events, approvals, diff, tree, actions } = relay;
   const [text, setText] = useState("");
   const [steerMode, setSteerMode] = useState(false);
   const [showSettings, setShowSettings] = useState(false);
@@ -192,7 +192,7 @@ export default function MainScreen({ relay, onForget }) {
 
         <SessionsModal
           visible={showSessions}
-          threads={threads}
+          tree={tree}
           onResume={(id) => { actions.resumeThread(id); setShowSessions(false); }}
           onRefresh={() => actions.listThreads()}
           onClose={() => setShowSessions(false)}

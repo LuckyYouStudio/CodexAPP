@@ -132,8 +132,8 @@ function handle(m) {
     case "diff":
       setDiff(m.diff || "");
       break;
-    case "threads":
-      renderSessions(m.threads || []);
+    case "projectTree":
+      renderProjectTree(m);
       break;
   }
 }
@@ -347,49 +347,53 @@ $("sessionsBtn").onclick = () => { $("sessionsSheet").classList.remove("hidden")
 $("sessionsRefresh").onclick = loadSessions;
 $("sessionsClose").onclick = () => $("sessionsSheet").classList.add("hidden");
 
-function projName(cwd) {
-  if (!cwd) return "(未知目录)";
-  return cwd.split(/[\\/]/).filter(Boolean).pop() || cwd;
+// Render the EXACT Codex desktop tree: projects (with labels, in order, empty
+// ones show 暂无对话) + the flat 对话 group. Data comes from the relay, which
+// reads Codex's own .codex-global-state.json.
+function sessionItem(t) {
+  const item = document.createElement("button");
+  item.className = "session-item nested";
+  const when = t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : "";
+  item.innerHTML =
+    `<div class="s-name">${escapeHtml(t.name || "(无标题)")}</div>` +
+    `<div class="s-meta">${escapeHtml(when)}</div>`;
+  item.onclick = () => {
+    sendWs({ type: "resumeThread", threadId: t.id });
+    $("sessionsSheet").classList.add("hidden");
+  };
+  return item;
 }
 
-// Group conversations by project folder (cwd), like Codex's project tree.
-function renderSessions(threads) {
+function renderProjectTree(tree) {
   const list = $("sessionsList");
   list.innerHTML = "";
-  if (!threads.length) { list.innerHTML = '<p class="muted small">没有会话</p>'; return; }
+  const projects = tree.projects || [];
+  const projectless = tree.projectless || [];
+  if (!projects.length && !projectless.length) { list.innerHTML = '<p class="muted small">没有会话</p>'; return; }
 
-  const groups = new Map();
-  threads.forEach((t) => {
-    const key = t.cwd || "(未知目录)";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(t);
-  });
-  const recent = (arr) => Math.max(...arr.map((t) => t.updatedAt || 0));
-  const sorted = [...groups.entries()].sort((a, b) => recent(b[1]) - recent(a[1]));
-
-  sorted.forEach(([cwd, ts]) => {
+  projects.forEach((p) => {
     const header = document.createElement("div");
     header.className = "session-group";
     header.innerHTML =
-      `<div class="sg-name">📁 ${escapeHtml(projName(cwd))} <span class="sg-count">${ts.length}</span></div>` +
-      `<div class="sg-path mono">${escapeHtml(cwd)}</div>`;
+      `<div class="sg-name">📁 ${escapeHtml(p.label)} <span class="sg-count">${p.threads.length}</span></div>` +
+      `<div class="sg-path mono">${escapeHtml(p.root)}</div>`;
     list.appendChild(header);
-
-    ts.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    ts.forEach((t) => {
-      const item = document.createElement("button");
-      item.className = "session-item nested";
-      const when = t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : "";
-      item.innerHTML =
-        `<div class="s-name">${escapeHtml(t.name || "(无标题)")}</div>` +
-        `<div class="s-meta">${escapeHtml(when)}${t.source ? " · " + escapeHtml(t.source) : ""}</div>`;
-      item.onclick = () => {
-        sendWs({ type: "resumeThread", threadId: t.id });
-        $("sessionsSheet").classList.add("hidden");
-      };
-      list.appendChild(item);
-    });
+    if (!p.threads.length) {
+      const empty = document.createElement("div");
+      empty.className = "muted small"; empty.style.margin = "0 0 8px 14px";
+      empty.textContent = "暂无对话";
+      list.appendChild(empty);
+    }
+    p.threads.forEach((t) => list.appendChild(sessionItem(t)));
   });
+
+  if (projectless.length) {
+    const header = document.createElement("div");
+    header.className = "session-group";
+    header.innerHTML = `<div class="sg-name">💬 对话 <span class="sg-count">${projectless.length}</span></div>`;
+    list.appendChild(header);
+    projectless.forEach((t) => list.appendChild(sessionItem(t)));
+  }
 }
 
 // ---------------------------------------------------------------------------

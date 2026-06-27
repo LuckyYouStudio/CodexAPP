@@ -19,6 +19,7 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
 const WEBAPP_DIR = path.join(ROOT, "web");
 const CONFIG_PATH = path.join(ROOT, "codexapp.config.json");
+const CODEX_HOME = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 
 // ---------------------------------------------------------------------------
 // Config
@@ -537,18 +538,46 @@ async function newThread(cwd) {
   pushEvent({ kind: "thread", text: "新建会话 @ " + state.cwd });
 }
 
-// List recent conversations (so the phone can pick a real project / resume).
-async function listThreads() {
-  const res = await codex.request("thread/list", { limit: 40 });
-  const data = (res?.data || []).map((t) => ({
-    id: t.id,
-    name: t.name || t.preview || "(无标题)",
-    cwd: t.cwd || null,
-    updatedAt: t.updatedAt || t.recencyAt || t.createdAt || 0,
-    source: t.source || null,
+// Build the SAME project tree the Codex desktop shows: projects (order + labels
+// from .codex-global-state.json), conversations assigned by cwd-under-root, and
+// the explicit projectless list as the flat 对话 group.
+async function buildProjectTree() {
+  const res = await codex.request("thread/list", { limit: 200 });
+  const threads = (res?.data || []).map((t) => ({
+    id: t.id, name: t.name || t.preview || "(无标题)", cwd: t.cwd || null,
+    updatedAt: t.updatedAt || t.recencyAt || t.createdAt || 0, source: t.source || null,
   }));
-  data.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-  return data;
+
+  let order = [], labels = {}, projectless = new Set();
+  try {
+    const gs = JSON.parse(fs.readFileSync(path.join(CODEX_HOME, ".codex-global-state.json"), "utf8"));
+    order = gs["project-order"] || gs["electron-saved-workspace-roots"] || [];
+    labels = gs["electron-workspace-root-labels"] || {};
+    projectless = new Set(gs["projectless-thread-ids"] || []);
+  } catch (e) {
+    console.error("[tree] global-state read failed:", e.message);
+  }
+
+  const lastSeg = (p) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+  const norm = (p) => (p || "").replace(/[\\/]+$/, "").toLowerCase();
+  const projects = order.map((r) => ({ root: r, label: labels[r] || lastSeg(r), threads: [] }));
+  const flat = [];
+  for (const t of threads) {
+    if (projectless.has(t.id)) { flat.push(t); continue; }
+    const c = norm(t.cwd);
+    let best = null;
+    for (const p of projects) {
+      const n = norm(p.root);
+      if (c === n || c.startsWith(n + "\\") || c.startsWith(n + "/")) {
+        if (!best || norm(best.root).length < n.length) best = p;
+      }
+    }
+    (best ? best.threads : flat).push(t);
+  }
+  const byRecency = (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0);
+  projects.forEach((p) => p.threads.sort(byRecency));
+  flat.sort(byRecency);
+  return { projects, projectless: flat };
 }
 
 // Convert a historical thread item into a feed event (or null to skip).
@@ -702,8 +731,8 @@ wss.on("connection", (ws, req) => {
           await newThread(m.cwd);
           break;
         case "listThreads": {
-          const threads = await listThreads();
-          send(ws, { type: "threads", threads });
+          const tree = await buildProjectTree();
+          send(ws, { type: "projectTree", ...tree });
           break;
         }
         case "resumeThread":

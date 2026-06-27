@@ -33,7 +33,7 @@ export function useRelay(profile, keypair) {
   const [events, setEvents] = useState([]);
   const [approvals, setApprovals] = useState([]);
   const [diff, setDiff] = useState("");
-  const [threads, setThreads] = useState([]);
+  const [tree, setTree] = useState({ projects: [], projectless: [] });
   const [agentFp, setAgentFp] = useState(null);
   const [paired, setPaired] = useState(false);
 
@@ -70,7 +70,7 @@ export function useRelay(profile, keypair) {
         break;
       case "state": setRelayState(m.state || {}); break;
       case "diff": setDiff(m.diff || ""); break;
-      case "threads": setThreads(m.threads || []); break;
+      case "projectTree": setTree({ projects: m.projects || [], projectless: m.projectless || [] }); break;
       case "event":
         pushEvents((prev) => {
           if (m.event.kind === "item:agentMessage") {
@@ -161,7 +161,7 @@ export function useRelay(profile, keypair) {
 
   useEffect(() => {
     aliveRef.current = true;
-    setEvents([]); setApprovals([]); setRelayState({}); setDiff(""); setThreads([]); setPaired(false);
+    setEvents([]); setApprovals([]); setRelayState({}); setDiff(""); setTree({ projects: [], projectless: [] }); setPaired(false);
     connect();
     return () => { aliveRef.current = false; clearTimeout(timerRef.current); try { wsRef.current && wsRef.current.close(); } catch {} };
   }, [profile, keypair]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -190,5 +190,5 @@ export function useRelay(profile, keypair) {
   };
 
   const connected = conn === "open" && (cloud ? (!!agentPubRef.current && paired && !!relayState.codexConnected) : !!relayState.codexConnected);
-  return { conn, connected, cloud, agentFp, relayState, config, events, approvals, diff, threads, actions };
+  return { conn, connected, cloud, agentFp, relayState, config, events, approvals, diff, tree, actions };
 }

@@ -1,46 +1,42 @@
 import { Modal, View, Text, Pressable, ScrollView, StyleSheet } from "react-native";
 import { C } from "./theme";
 
-const projName = (cwd) => (cwd ? (cwd.split(/[\\/]/).filter(Boolean).pop() || cwd) : "(未知目录)");
+// Renders the SAME project tree Codex desktop shows (projects + labels + order
+// + empty "暂无对话" + flat 对话). Data comes from the relay (reads Codex's
+// own .codex-global-state.json).
+export default function SessionsModal({ visible, tree, onResume, onRefresh, onClose }) {
+  const projects = (tree && tree.projects) || [];
+  const projectless = (tree && tree.projectless) || [];
 
-function groupByProject(threads) {
-  const groups = new Map();
-  (threads || []).forEach((t) => {
-    const key = t.cwd || "(未知目录)";
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(t);
-  });
-  const recent = (arr) => Math.max(...arr.map((t) => t.updatedAt || 0));
-  return [...groups.entries()]
-    .map(([cwd, ts]) => [cwd, ts.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0))])
-    .sort((a, b) => recent(b[1]) - recent(a[1]));
-}
+  const item = (t) => (
+    <Pressable key={t.id} style={s.item} onPress={() => onResume(t.id)}>
+      <Text style={s.name} numberOfLines={1}>{t.name || "(无标题)"}</Text>
+      <Text style={s.meta}>{t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : ""}</Text>
+    </Pressable>
+  );
 
-export default function SessionsModal({ visible, threads, onResume, onRefresh, onClose }) {
-  const groups = groupByProject(threads);
   return (
     <Modal visible={visible} animationType="slide" transparent onRequestClose={onClose}>
       <View style={s.backdrop}>
         <View style={s.sheet}>
           <Text style={s.h2}>会话 / 项目</Text>
-          <Text style={s.hint}>按项目目录分组，点一条接着写。</Text>
+          <Text style={s.hint}>与电脑 Codex 的项目结构一致，点一条接着写。</Text>
           <ScrollView style={{ maxHeight: "70%" }}>
-            {groups.length === 0 && <Text style={s.hint}>没有会话</Text>}
-            {groups.map(([cwd, ts]) => (
-              <View key={cwd}>
-                <Text style={s.groupName} numberOfLines={1}>📁 {projName(cwd)}  ({ts.length})</Text>
-                <Text style={s.groupPath} numberOfLines={1}>{cwd}</Text>
-                {ts.map((t) => (
-                  <Pressable key={t.id} style={s.item} onPress={() => onResume(t.id)}>
-                    <Text style={s.name} numberOfLines={1}>{t.name || "(无标题)"}</Text>
-                    <Text style={s.meta}>
-                      {t.updatedAt ? new Date(t.updatedAt * 1000).toLocaleString() : ""}
-                      {t.source ? " · " + t.source : ""}
-                    </Text>
-                  </Pressable>
-                ))}
+            {projects.length === 0 && projectless.length === 0 && <Text style={s.hint}>没有会话</Text>}
+            {projects.map((p) => (
+              <View key={p.root}>
+                <Text style={s.groupName} numberOfLines={1}>📁 {p.label}  ({p.threads.length})</Text>
+                <Text style={s.groupPath} numberOfLines={1}>{p.root}</Text>
+                {p.threads.length === 0 && <Text style={s.empty}>暂无对话</Text>}
+                {p.threads.map(item)}
               </View>
             ))}
+            {projectless.length > 0 && (
+              <View>
+                <Text style={s.groupName}>💬 对话  ({projectless.length})</Text>
+                {projectless.map(item)}
+              </View>
+            )}
           </ScrollView>
           <Pressable style={[s.btn, s.secondary]} onPress={onRefresh}><Text style={s.btnText}>刷新</Text></Pressable>
           <Pressable style={[s.btn, s.ghost]} onPress={onClose}><Text style={[s.btnText, { color: C.muted }]}>关闭</Text></Pressable>
@@ -60,6 +56,7 @@ const s = StyleSheet.create({
   meta: { color: C.muted, fontSize: 12 },
   groupName: { color: C.accent2, fontWeight: "700", fontSize: 14, marginTop: 10 },
   groupPath: { color: C.muted, fontSize: 11, marginBottom: 6 },
+  empty: { color: C.muted, fontSize: 12, marginLeft: 12, marginBottom: 8 },
   btn: { borderRadius: 10, paddingVertical: 13, alignItems: "center", borderWidth: 1, borderColor: C.line, marginTop: 8 },
   secondary: { backgroundColor: C.card2 },
   ghost: { backgroundColor: "transparent" },

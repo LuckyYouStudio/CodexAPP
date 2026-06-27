@@ -13,6 +13,9 @@ import { spawn } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import os from "node:os";
+
+const CODEX_HOME = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 
 const EVENT_LOG_CAP = 400;
 
@@ -385,10 +388,33 @@ export class CodexBridge {
     this._pushEvent({ kind: "thread", text: "新建会话 @ " + this.state.cwd });
   }
   async _listThreads() {
-    const res = await this.codex.request("thread/list", { limit: 40 });
-    const data = (res?.data || []).map((t) => ({ id: t.id, name: t.name || t.preview || "(无标题)", cwd: t.cwd || null, updatedAt: t.updatedAt || t.recencyAt || t.createdAt || 0, source: t.source || null }));
-    data.sort((a, b) => (b.updatedAt || 0) - (a.updatedAt || 0));
-    this.emit({ type: "threads", threads: data });
+    const res = await this.codex.request("thread/list", { limit: 200 });
+    const threads = (res?.data || []).map((t) => ({ id: t.id, name: t.name || t.preview || "(无标题)", cwd: t.cwd || null, updatedAt: t.updatedAt || t.recencyAt || t.createdAt || 0, source: t.source || null }));
+    let order = [], labels = {}, projectless = new Set();
+    try {
+      const gs = JSON.parse(fs.readFileSync(path.join(CODEX_HOME, ".codex-global-state.json"), "utf8"));
+      order = gs["project-order"] || gs["electron-saved-workspace-roots"] || [];
+      labels = gs["electron-workspace-root-labels"] || {};
+      projectless = new Set(gs["projectless-thread-ids"] || []);
+    } catch {}
+    const lastSeg = (p) => p.split(/[\\/]/).filter(Boolean).pop() || p;
+    const norm = (p) => (p || "").replace(/[\\/]+$/, "").toLowerCase();
+    const projects = order.map((r) => ({ root: r, label: labels[r] || lastSeg(r), threads: [] }));
+    const flat = [];
+    for (const t of threads) {
+      if (projectless.has(t.id)) { flat.push(t); continue; }
+      const c = norm(t.cwd);
+      let best = null;
+      for (const p of projects) {
+        const n = norm(p.root);
+        if (c === n || c.startsWith(n + "\\") || c.startsWith(n + "/")) if (!best || norm(best.root).length < n.length) best = p;
+      }
+      (best ? best.threads : flat).push(t);
+    }
+    const byRecency = (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0);
+    projects.forEach((p) => p.threads.sort(byRecency));
+    flat.sort(byRecency);
+    this.emit({ type: "projectTree", projects, projectless: flat });
   }
   async _resumeThread(threadId) {
     const res = await this.codex.request("thread/resume", { threadId, approvalPolicy: this.state.approvalPolicy, sandbox: this.state.sandbox });
