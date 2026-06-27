@@ -409,7 +409,7 @@ export class CodexBridge {
         const n = norm(p.root);
         if (c === n || c.startsWith(n + "\\") || c.startsWith(n + "/")) if (!best || norm(best.root).length < n.length) best = p;
       }
-      (best ? best.threads : flat).push(t);
+      if (best) best.threads.push(t); // only desktop-tracked threads; drop ad-hoc others
     }
     const byRecency = (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0);
     projects.forEach((p) => p.threads.sort(byRecency));

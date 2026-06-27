@@ -563,7 +563,7 @@ async function buildProjectTree() {
   const projects = order.map((r) => ({ root: r, label: labels[r] || lastSeg(r), threads: [] }));
   const flat = [];
   for (const t of threads) {
-    if (projectless.has(t.id)) { flat.push(t); continue; }
+    if (projectless.has(t.id)) { flat.push(t); continue; } // 对话 = exactly Codex's projectless list
     const c = norm(t.cwd);
     let best = null;
     for (const p of projects) {
@@ -572,7 +572,9 @@ async function buildProjectTree() {
         if (!best || norm(best.root).length < n.length) best = p;
       }
     }
-    (best ? best.threads : flat).push(t);
+    // Only show what the desktop tracks: a project (by cwd) or projectless.
+    // Threads in neither (e.g. ad-hoc chats elsewhere) are not shown, matching Codex.
+    if (best) best.threads.push(t);
   }
   const byRecency = (a, b) => (b.updatedAt || 0) - (a.updatedAt || 0);
   projects.forEach((p) => p.threads.sort(byRecency));
