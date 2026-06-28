@@ -11,6 +11,10 @@
 # 可重复运行(再次运行 = 更新代码 + 重启)。
 # 非交互:预先 export DOMAIN/ADMIN_EMAIL/SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM/ADMIN_TOKEN
 # ADMIN_TOKEN 不设则自动随机生成(并在结尾打印);重复运行会保留已有令牌。
+# 国内服务器(GitHub 不通)可用镜像:
+#   REPO=https://ghproxy.net/https://github.com/LuckyYouStudio/CodexAPP.git \
+#   NPM_REGISTRY=https://registry.npmmirror.com  sudo -E bash deploy.sh
+#   (Caddy 若 apt 源不通会自动改用二进制;必要时再 export CADDY_URL=可下载的二进制地址)
 # ============================================================================
 set -euo pipefail
 
@@ -56,10 +60,36 @@ command -v git >/dev/null 2>&1 || { apt-get update -y; apt-get install -y git; }
 # ---- Caddy(自动 HTTPS 反代) ----
 if ! command -v caddy >/dev/null 2>&1; then
   echo "[*] 安装 Caddy ..."
-  apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg
-  curl -1sLf 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list
-  apt-get update -y && apt-get install -y caddy
+  apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg || true
+  # 主路:cloudsmith apt 源(海外快;国内可能不稳,失败则走二进制兜底)
+  if curl -1sLf -m 20 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' 2>/dev/null | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null; then
+    curl -1sLf -m 20 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null || true
+    apt-get update -y >/dev/null 2>&1 && apt-get install -y caddy || true
+  fi
+  # 兜底:直接下二进制 + 自建 systemd 服务(CADDY_URL 可覆盖,默认官方下载)
+  if ! command -v caddy >/dev/null 2>&1; then
+    echo "[*] apt 源不可达,改用二进制安装 Caddy ..."
+    curl -fsSL -m 120 -o /usr/bin/caddy "${CADDY_URL:-https://caddyserver.com/api/download?os=linux&arch=amd64}"
+    chmod +x /usr/bin/caddy
+    id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --create-home --shell /usr/sbin/nologin caddy
+    mkdir -p /etc/caddy
+    cat > /etc/systemd/system/caddy.service <<'CADDYEOF'
+[Unit]
+Description=Caddy
+After=network.target network-online.target
+Requires=network-online.target
+[Service]
+User=caddy
+Group=caddy
+ExecStart=/usr/bin/caddy run --config /etc/caddy/Caddyfile
+ExecReload=/usr/bin/caddy reload --config /etc/caddy/Caddyfile --force
+Restart=on-abnormal
+AmbientCapabilities=CAP_NET_BIND_SERVICE
+[Install]
+WantedBy=multi-user.target
+CADDYEOF
+    systemctl daemon-reload; systemctl enable caddy
+  fi
 fi
 
 # ---- 拉取/更新代码 ----
@@ -69,7 +99,8 @@ else
   echo "[*] 拉取代码 ..."; git clone --depth 1 "$REPO" "$APP_DIR"
 fi
 cd "$APP_DIR"
-echo "[*] 安装依赖 ..."; (npm ci --omit=dev 2>/dev/null || npm install --omit=dev)
+REG="${NPM_REGISTRY:-https://registry.npmjs.org}"
+echo "[*] 安装依赖 (registry: $REG) ..."; (npm ci --omit=dev --registry "$REG" 2>/dev/null || npm install --omit=dev --registry "$REG")
 
 # ---- 运行用户 + 数据目录 ----
 id -u "$RUN_USER" >/dev/null 2>&1 || useradd -r -s /usr/sbin/nologin "$RUN_USER"
