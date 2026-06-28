@@ -1,0 +1,40 @@
+CodexApp Agent —— 让手机/网页远程控制这台 Mac 上的 Codex
+
+【先决条件】
+- 这台 Mac 已安装并登录 Codex(终端里能用 `codex`,或装了 Codex 桌面端)。
+- 需要一份 Mac 版的程序 CodexApp-Agent(见下方"怎么得到")。
+
+【最简单:直接运行(推荐先这样测试)】
+1. 打开"终端",进入放着 CodexApp-Agent 的目录。
+2. 首次运行(去掉 Gatekeeper 隔离):
+     xattr -dr com.apple.quarantine ./CodexApp-Agent
+     chmod +x ./CodexApp-Agent
+     ./CodexApp-Agent
+3. 会自动打开浏览器到控制面板 http://127.0.0.1:7878
+4. 在面板里填 Broker 地址、邮箱、密码 → 「登录并启动」。(没账号就点「注册」)
+5. 登录后面板显示状态 + 配对码。手机/网页用同一账号登录,输入配对码即可。
+
+【正式安装:登录自启、后台运行】
+把 CodexApp-Agent 和 install-mac.sh 放在一起,终端执行:
+     bash install-mac.sh
+它会安装到 ~/Library/Application Support/CodexAppAgent/、设置 LaunchAgent 登录自启
+(后台、不弹浏览器),并打开一次面板让你登录。
+卸载:  bash uninstall-mac.sh
+
+【怎么得到 Mac 版程序】
+开发机若是 Mac:
+     git clone <仓库> && cd CodexAPP && npm install
+     node cloud/build-agent.mjs        # 生成 dist/CodexApp-Agent(已 ad-hoc 签名)
+不想打包也行,装了 Node 22 直接跑源码:
+     node cloud/agent.mjs
+
+【改配置 / 换账号】
+最简单:打开 http://127.0.0.1:7878 →「退出登录」后重新登录。
+或编辑 agent.config.json(和程序同目录;安装版在 ~/Library/Application Support/CodexAppAgent/)。
+
+【注意】
+- Mac 要保持开机、不休眠,客户端才连得上(Codex 在本地运行)。
+- 所有内容端到端加密,服务器看不到你的代码和命令。
+- 控制面板只监听本机 127.0.0.1,外部访问不到。
+- 本程序为 ad-hoc 签名,首次可能被 Gatekeeper 拦:用上面的 xattr 命令清隔离,或在
+  "系统设置 → 隐私与安全性"里点"仍要打开"。正式发布会用 Apple Developer ID 签名+公证。

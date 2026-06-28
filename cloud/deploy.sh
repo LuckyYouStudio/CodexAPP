@@ -204,4 +204,4 @@ fi
 echo "=================================================="
 echo
 echo "下一步:用户访问 https://$DOMAIN/ 注册→验证邮箱→登录;"
-echo "        电脑端装 Agent(Install.cmd,Broker 地址填 https://$DOMAIN)登录同账号即可匹配。"
+echo "        电脑端装 Agent(Windows: Install.cmd / macOS: install-mac.sh),Broker 地址填 https://$DOMAIN,登录同账号即可匹配。"

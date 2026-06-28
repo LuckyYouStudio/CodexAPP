@@ -12,6 +12,7 @@
 // Run:  node cloud/agent.mjs        (or the packaged CodexApp-Agent.exe)
 import fs from "node:fs";
 import path from "node:path";
+import os from "node:os";
 import http from "node:http";
 import crypto from "node:crypto";
 import { exec } from "node:child_process";
@@ -34,7 +35,7 @@ const PAIRING_TXT = path.join(BASE, "pairing-code.txt");
 
 const DEFAULTS = {
   brokerUrl: "http://127.0.0.1:8787", email: "", password: "", codexBin: "",
-  defaultCwd: "C:\\test", approvalPolicy: "on-request", sandbox: "workspace-write", model: null,
+  defaultCwd: os.homedir(), approvalPolicy: "on-request", sandbox: "workspace-write", model: null,
   originator: "codex_vscode", panelPort: 7878,
 };
 
@@ -278,9 +279,14 @@ function startPanel(port, tries = 0) {
     const url = "http://127.0.0.1:" + port;
     console.log("[panel] 控制面板: " + url);
     console.log("[agent] device fingerprint:", status.fingerprint, " PAIRING CODE:", pairing.code);
-    // Open the panel in the browser on run. The installer's autostart launcher sets
-    // CODEXAPP_NO_OPEN=1 so the background agent stays silent (panel still at this URL).
-    if (process.platform === "win32" && !process.env.CODEXAPP_NO_OPEN) { try { exec('start "" "' + url + '"'); } catch {} }
+    // Open the panel in the browser on run (Win/macOS/Linux). The installer's
+    // autostart launcher sets CODEXAPP_NO_OPEN=1 so the background agent stays silent.
+    if (!process.env.CODEXAPP_NO_OPEN) {
+      const cmd = process.platform === "win32" ? `start "" "${url}"`
+                : process.platform === "darwin" ? `open "${url}"`
+                : `xdg-open "${url}"`;
+      try { exec(cmd); } catch {}
+    }
   });
 }
 

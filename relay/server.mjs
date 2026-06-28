@@ -14,6 +14,7 @@ import crypto from "node:crypto";
 import os from "node:os";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
+import { resolveCodexBin } from "../core/codexBridge.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, "..");
@@ -25,16 +26,15 @@ const CODEX_HOME = process.env.CODEX_HOME || path.join(os.homedir(), ".codex");
 // Config
 // ---------------------------------------------------------------------------
 const DEFAULT_CONFIG = {
-  // Absolute path to codex.exe. Auto-detected on this machine; override if needed.
-  codexBin:
-    "C:\\Users\\liush\\AppData\\Local\\OpenAI\\Codex\\bin\\8e55c2dd143b6354\\codex.exe",
+  // Path to the codex binary. Empty = auto-detect (cross-platform); override if needed.
+  codexBin: "",
   // HTTP + WS listen. 0.0.0.0 so the phone on your LAN / Tailscale can reach it.
   host: "0.0.0.0",
   port: 4123,
   // Shared secret the phone must present. Auto-generated on first run.
   token: "",
   // Working directory new Codex threads start in.
-  defaultCwd: "C:\\test",
+  defaultCwd: os.homedir(),
   // Approval gating. "on-request" = agent escalates to you when it wants to do
   // something outside the sandbox. Use "untrusted" to be prompted for ~everything.
   approvalPolicy: "on-request",
@@ -66,6 +66,7 @@ function loadConfig() {
   }
   if (process.env.PORT) cfg.port = Number(process.env.PORT);
   if (process.env.HOST) cfg.host = process.env.HOST;
+  if (!cfg.defaultCwd) cfg.defaultCwd = os.homedir(); // empty/missing -> home (cross-platform)
   return cfg;
 }
 
@@ -767,26 +768,11 @@ wss.on("connection", (ws, req) => {
 // ---------------------------------------------------------------------------
 // Boot
 // ---------------------------------------------------------------------------
-// Codex installs into a hash-named dir that changes on every self-update, so a
-// hard-coded path goes stale. Auto-detect the newest codex.exe when it's missing.
-function resolveCodexBin(configured) {
-  if (configured && fs.existsSync(configured)) return configured;
-  const base = path.join(process.env.LOCALAPPDATA || "", "OpenAI", "Codex", "bin");
-  try {
-    const found = fs.readdirSync(base)
-      .map((d) => path.join(base, d, "codex.exe"))
-      .filter((p) => fs.existsSync(p))
-      .map((p) => ({ p, m: fs.statSync(p).mtimeMs }))
-      .sort((a, b) => b.m - a.m);
-    if (found.length) return found[0].p;
-  } catch {}
-  return null;
-}
-
+// Codex binary auto-detection (cross-platform) is shared from core/codexBridge.mjs.
 async function main() {
   const bin = resolveCodexBin(config.codexBin);
   if (!bin) {
-    console.error("[fatal] codex.exe not found. Set codexBin in codexapp.config.json");
+    console.error("[fatal] 未找到 codex 可执行文件。请在 codexapp.config.json 设置 codexBin(或确保 codex 在 PATH 上)");
     process.exit(1);
   }
   if (bin !== config.codexBin) {
