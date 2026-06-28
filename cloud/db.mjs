@@ -20,16 +20,28 @@ db.exec(`
     verify_expires INTEGER,
     reset_token TEXT,
     reset_expires INTEGER,
+    membership_until INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_accounts_verify_token ON accounts(verify_token);
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
+  CREATE TABLE IF NOT EXISTS codes (
+    code TEXT PRIMARY KEY,
+    days INTEGER NOT NULL DEFAULT 0,
+    lifetime INTEGER NOT NULL DEFAULT 0,
+    note TEXT,
+    created_at INTEGER NOT NULL,
+    redeemed_by TEXT,
+    redeemed_at INTEGER
+  );
+  CREATE INDEX IF NOT EXISTS idx_codes_redeemed ON codes(redeemed_by);
 `);
 
-// Migrate older DBs (created before password reset) by adding the columns.
+// Migrate older DBs (created before later features) by adding the columns.
 const _cols = db.prepare("PRAGMA table_info(accounts)").all().map((c) => c.name);
 if (!_cols.includes("reset_token")) db.exec("ALTER TABLE accounts ADD COLUMN reset_token TEXT");
 if (!_cols.includes("reset_expires")) db.exec("ALTER TABLE accounts ADD COLUMN reset_expires INTEGER");
+if (!_cols.includes("membership_until")) db.exec("ALTER TABLE accounts ADD COLUMN membership_until INTEGER NOT NULL DEFAULT 0");
 db.exec("CREATE INDEX IF NOT EXISTS idx_accounts_reset_token ON accounts(reset_token);");
 
 // ---- key/value settings (e.g. SMTP config editable from the admin UI) ----
@@ -45,14 +57,40 @@ export function setSetting(key, value) {
 // ---- admin helpers ----
 export function getById(id) { return db.prepare("SELECT * FROM accounts WHERE id = ?").get(id); }
 export function listAccounts(limit = 200) {
-  return db.prepare("SELECT id,email,email_verified,created_at FROM accounts ORDER BY created_at DESC LIMIT ?").all(limit);
+  return db.prepare("SELECT id,email,email_verified,membership_until,created_at FROM accounts ORDER BY created_at DESC LIMIT ?").all(limit);
 }
 export function counts() {
   const total = db.prepare("SELECT COUNT(*) n FROM accounts").get().n;
   const verified = db.prepare("SELECT COUNT(*) n FROM accounts WHERE email_verified = 1").get().n;
-  return { total, verified };
+  const members = db.prepare("SELECT COUNT(*) n FROM accounts WHERE membership_until > ?").get(Date.now()).n;
+  return { total, verified, members };
 }
 export function deleteAccount(id) { db.prepare("DELETE FROM accounts WHERE id = ?").run(id); }
+
+// ---- membership ----
+export function setMembership(id, until) {
+  db.prepare("UPDATE accounts SET membership_until = ? WHERE id = ?").run(until, id);
+}
+
+// ---- redemption codes ----
+export function createCode(c) {
+  db.prepare("INSERT INTO codes (code,days,lifetime,note,created_at) VALUES (?,?,?,?,?)")
+    .run(c.code, c.days | 0, c.lifetime ? 1 : 0, c.note ?? null, c.created_at);
+}
+export function getCode(code) { return db.prepare("SELECT * FROM codes WHERE code = ?").get(code); }
+// Atomically claim an unused code; returns true if this call won the claim.
+export function redeemCode(code, accountId, at) {
+  const r = db.prepare("UPDATE codes SET redeemed_by = ?, redeemed_at = ? WHERE code = ? AND redeemed_by IS NULL").run(accountId, at, code);
+  return r.changes > 0;
+}
+export function listCodes(limit = 200) {
+  return db.prepare("SELECT * FROM codes ORDER BY created_at DESC LIMIT ?").all(limit);
+}
+export function codeStats() {
+  const total = db.prepare("SELECT COUNT(*) n FROM codes").get().n;
+  const used = db.prepare("SELECT COUNT(*) n FROM codes WHERE redeemed_by IS NOT NULL").get().n;
+  return { total, used };
+}
 
 export function getByEmail(email) {
   return db.prepare("SELECT * FROM accounts WHERE email = ?").get(email);

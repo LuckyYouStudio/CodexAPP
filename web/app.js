@@ -15,6 +15,10 @@ let profile = loadProfile();
 let keys = loadKeys();      // E2E keypair (cloud mode)
 let agentPub = null;        // peer (agent) public key (cloud mode)
 let paired = false;
+let authToken = null;       // JWT from /api/login (used for /api/redeem)
+let memberUntil = 0;        // cloud membership expiry (ms epoch; >=LIFETIME = 永久)
+let membershipBlocked = false;
+const LIFETIME_TS = 4102444800000;
 
 // ---------------------------------------------------------------------------
 // Profile + keys
@@ -51,8 +55,54 @@ function showSetup() {
 }
 function showApp() {
   $("setup").classList.add("hidden");
+  $("membership").classList.add("hidden");
   $("app").classList.remove("hidden");
+  $("redeemBtn").classList.toggle("hidden", profile.mode !== "cloud");
+  updateMemberStatus();
 }
+
+// ---------------------------------------------------------------------------
+// Membership (cloud only; LAN is free)
+// ---------------------------------------------------------------------------
+function fmtMember(until) {
+  if (!until) return "未开通";
+  if (until >= LIFETIME_TS) return "永久会员";
+  if (until < Date.now()) return "已过期（" + new Date(until).toLocaleDateString() + "）";
+  return "有效期至 " + new Date(until).toLocaleDateString();
+}
+function updateMemberStatus() {
+  const el = $("memberStatus");
+  if (el) el.textContent = profile.mode === "cloud" ? "会员：" + fmtMember(memberUntil) : "局域网模式（免费）";
+}
+function showMembership(msg) {
+  $("setup").classList.add("hidden");
+  $("app").classList.add("hidden");
+  $("membership").classList.remove("hidden");
+  $("mStatus").textContent = "当前：" + fmtMember(memberUntil);
+  $("mMsg").textContent = msg || "";
+}
+function hideMembership() { $("membership").classList.add("hidden"); }
+
+$("mRedeem").onclick = async () => {
+  const code = $("mCode").value.trim().toUpperCase();
+  if (!code) { $("mMsg").textContent = "请输入兑换码"; return; }
+  if (!authToken) { $("mMsg").textContent = "请先登录后再兑换"; return; }
+  $("mMsg").textContent = "兑换中…";
+  try {
+    const r = await fetch("/api/redeem", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ token: authToken, code }) });
+    const j = await r.json().catch(() => ({}));
+    if (!r.ok) { $("mMsg").textContent = "兑换失败：" + (j.error || r.status); return; }
+    memberUntil = j.membershipUntil || 0;
+    updateMemberStatus();
+    $("mCode").value = "";
+    hideMembership();
+    if (membershipBlocked) { membershipBlocked = false; showApp(); connect(); }
+    else { showApp(); }
+  } catch (e) { $("mMsg").textContent = "网络错误：" + e.message; }
+};
+$("mLan").onclick = () => { hideMembership(); showSetup(); switchTab("lan"); };
+$("mClose").onclick = () => { hideMembership(); if (membershipBlocked) showSetup(); else showApp(); };
+$("redeemBtn").onclick = () => { $("sheet").classList.add("hidden"); showMembership(); };
 function loginFailed(msg, resend) {
   showSetup();
   switchTab("cloud");
@@ -140,8 +190,13 @@ async function connectCloud() {
     if (r.status === 401) { loginFailed("账号或密码错误"); return; }
     if (r.status === 403) { loginFailed("请先验证邮箱（注册后点邮件里的链接）", true); return; }
     if (!r.ok) { scheduleReconnect(); return; }
-    token = (await r.json()).token;
+    const data = await r.json();
+    token = data.token; authToken = token; memberUntil = data.membershipUntil || 0;
+    updateMemberStatus();
   } catch { scheduleReconnect(); return; }
+
+  // Not a member → show the upgrade screen instead of (uselessly) hitting the gate.
+  if (memberUntil <= Date.now()) { membershipBlocked = true; showMembership("云端会员未开通或已过期，输入兑换码即可开通。"); return; }
 
   try { ws = new WebSocket(location.origin.replace(/^http/, "ws") + "/link"); }
   catch { scheduleReconnect(); return; }
@@ -164,9 +219,13 @@ async function connectCloud() {
       handle(inner);
       return;
     }
-    if (m.type === "error") { if (/token|invalid/i.test(m.message || "")) setConn(false, "登录失效"); return; }
+    if (m.type === "error") {
+      if (m.code === "membership_required") { membershipBlocked = true; try { ws.close(); } catch {} showMembership("云端会员未开通或已过期，输入兑换码即可开通。"); return; }
+      if (/token|invalid/i.test(m.message || "")) setConn(false, "登录失效");
+      return;
+    }
   };
-  ws.onclose = () => { setConn(false, "已断开"); scheduleReconnect(); };
+  ws.onclose = () => { setConn(false, "已断开"); if (!membershipBlocked) scheduleReconnect(); };
   ws.onerror = () => { try { ws.close(); } catch {} };
 }
 

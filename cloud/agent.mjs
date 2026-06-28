@@ -77,6 +77,7 @@ let ws = null;
 let phonePubkey = null;
 let trusted = false;
 let backoff = 1000;
+let membershipWait = false; // true after a membership_required rejection (slow retry)
 
 const bridge = new CodexBridge(config, (msg) => {
   // CodexApp data only flows to a PAIRED phone.
@@ -153,9 +154,20 @@ function connect(token) {
       bridge.dispatch(inner).catch((e) => sendCtrl({ type: "error", message: e.message }));
       return;
     }
-    if (m.type === "error") console.error("[agent] broker error:", m.message);
+    if (m.type === "error") {
+      if (m.code === "membership_required") {
+        membershipWait = true;
+        console.error("[agent] 云端会员未开通或已过期。请在客户端用兑换码开通；将每 60 秒自动重试。(局域网模式不受影响)");
+      } else console.error("[agent] broker error:", m.message);
+    }
   });
-  ws.on("close", () => { phonePubkey = null; trusted = false; setTimeout(start, backoff); backoff = Math.min(backoff * 1.6, 15000); });
+  ws.on("close", () => {
+    phonePubkey = null; trusted = false;
+    const delay = membershipWait ? 60000 : backoff;
+    membershipWait = false;
+    setTimeout(start, delay);
+    backoff = Math.min(backoff * 1.6, 15000);
+  });
   ws.on("error", () => { try { ws.close(); } catch {} });
 }
 

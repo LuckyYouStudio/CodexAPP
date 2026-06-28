@@ -85,13 +85,14 @@ function register(email, password) {
   const salt = crypto.randomBytes(16).toString("hex");
   const token = newVerifyToken();
   db.createAccount({ id, email, salt, hash: hashPw(password, salt), email_verified: 0, verify_token: token, verify_expires: Date.now() + VERIFY_TTL_MS, created_at: Date.now() });
+  if (TRIAL_DAYS > 0) db.setMembership(id, Date.now() + TRIAL_DAYS * DAY_MS); // free trial
   return { accountId: id, verifyToken: token };
 }
 function login(email, password) {
   const acc = db.getByEmail(email);
   if (!acc || !eq(hashPw(password, acc.salt), acc.hash)) return { ok: false, code: "invalid" };
   if (!acc.email_verified) return { ok: false, code: "unverified" };
-  return { ok: true, token: signToken(acc.id), accountId: acc.id };
+  return { ok: true, token: signToken(acc.id), accountId: acc.id, membershipUntil: acc.membership_until || 0 };
 }
 function issueVerify(email) {
   const acc = db.getByEmail(email);
@@ -106,6 +107,34 @@ function issueReset(email) {
   const token = newVerifyToken();
   db.setResetToken(acc.id, token, Date.now() + RESET_TTL_MS);
   return token;
+}
+
+// ---- membership (cloud only; LAN mode never touches the broker, so it's free) ----
+const LIFETIME_TS = 4102444800000; // 2100-01-01: "lifetime" membership sentinel
+const TRIAL_DAYS = Number(process.env.TRIAL_DAYS || 7); // free trial on registration
+const DAY_MS = 86400000;
+const isMember = (acc) => !!acc && (acc.membership_until || 0) > Date.now();
+
+// Human-friendly code, no ambiguous chars (0/O/1/I/L). e.g. CDX-ABCD-EFGH-JKMN
+const CODE_ALPHABET = "ABCDEFGHJKMNPQRSTUVWXYZ23456789";
+function genCode() {
+  const b = crypto.randomBytes(12);
+  let s = "";
+  for (let i = 0; i < 12; i++) s += CODE_ALPHABET[b[i] % CODE_ALPHABET.length];
+  return `CDX-${s.slice(0, 4)}-${s.slice(4, 8)}-${s.slice(8, 12)}`;
+}
+function redeem(accountId, codeRaw) {
+  const code = String(codeRaw || "").trim().toUpperCase();
+  if (!code) return { error: "请输入兑换码" };
+  const c = db.getCode(code);
+  if (!c) return { error: "兑换码无效" };
+  if (c.redeemed_by) return { error: "兑换码已被使用" };
+  if (!db.redeemCode(code, accountId, Date.now())) return { error: "兑换码已被使用" }; // lost the atomic race
+  const acc = db.getById(accountId);
+  const base = Math.max(Date.now(), acc.membership_until || 0); // stack onto remaining time
+  const until = c.lifetime ? LIFETIME_TS : base + (c.days | 0) * DAY_MS;
+  db.setMembership(accountId, until);
+  return { ok: true, membershipUntil: until };
 }
 
 // ---- login/register rate limiting (per IP+email sliding window) ----
@@ -211,8 +240,8 @@ async function handleAdmin(req, res) {
       const acc = db.getById(aid);
       online.push({ email: acc ? acc.email : aid.slice(0, 8), agent: !!r.agent, phone: !!r.phone });
     }
-    const users = db.listAccounts(200).map((u) => ({ id: u.id, email: u.email, verified: !!u.email_verified, createdAt: u.created_at }));
-    return res.end(JSON.stringify({ counts: db.counts(), online, users }));
+    const users = db.listAccounts(200).map((u) => ({ id: u.id, email: u.email, verified: !!u.email_verified, membershipUntil: u.membership_until || 0, createdAt: u.created_at }));
+    return res.end(JSON.stringify({ counts: db.counts(), online, users, lifetimeTs: LIFETIME_TS }));
   }
   if (P && p === "/api/admin/user/verify") { const b = await readBody(req); if (b.id) db.setVerified(b.id); return res.end(JSON.stringify({ ok: true })); }
   if (P && p === "/api/admin/user/resend") {
@@ -230,6 +259,44 @@ async function handleAdmin(req, res) {
     }
     return res.end(JSON.stringify({ ok: true }));
   }
+
+  // Set/extend/revoke a user's membership.
+  if (P && p === "/api/admin/user/membership") {
+    const b = await readBody(req);
+    const acc = b.id && db.getById(b.id);
+    if (!acc) { res.writeHead(404); return res.end(JSON.stringify({ error: "账号不存在" })); }
+    let until;
+    if (b.revoke) until = 0;
+    else if (b.lifetime) until = LIFETIME_TS;
+    else { const base = Math.max(Date.now(), acc.membership_until || 0); until = base + (Number(b.addDays) || 0) * DAY_MS; }
+    db.setMembership(acc.id, until);
+    return res.end(JSON.stringify({ ok: true, membershipUntil: until }));
+  }
+
+  // Generate redemption codes.
+  if (P && p === "/api/admin/codes/generate") {
+    const b = await readBody(req);
+    const count = Math.max(1, Math.min(500, Number(b.count) || 1));
+    const lifetime = !!b.lifetime;
+    const days = lifetime ? 0 : Math.max(1, Number(b.days) || 30);
+    const note = (b.note || "").toString().slice(0, 120);
+    const out = [];
+    for (let i = 0; i < count; i++) {
+      let code, tries = 0;
+      do { code = genCode(); tries++; } while (db.getCode(code) && tries < 5);
+      try { db.createCode({ code, days, lifetime, note, created_at: Date.now() }); out.push(code); } catch {}
+    }
+    return res.end(JSON.stringify({ ok: true, codes: out, days, lifetime }));
+  }
+  // List recent codes + stats.
+  if (G && p === "/api/admin/codes") {
+    const codes = db.listCodes(300).map((c) => ({
+      code: c.code, days: c.days, lifetime: !!c.lifetime, note: c.note || "",
+      createdAt: c.created_at, used: !!c.redeemed_by, redeemedAt: c.redeemed_at || 0,
+    }));
+    return res.end(JSON.stringify({ stats: db.codeStats(), codes }));
+  }
+
   res.writeHead(404); res.end(JSON.stringify({ error: "未知接口" }));
 }
 
@@ -270,7 +337,7 @@ function requestHandler(req, res) {
       const r = login(p.email, p.password);
       if (!r.ok && r.code === "unverified") { res.writeHead(403); return res.end(JSON.stringify({ error: "请先验证邮箱（查收验证邮件）", code: "unverified" })); }
       if (!r.ok) { res.writeHead(401); return res.end(JSON.stringify({ error: "邮箱或密码错误" })); }
-      res.end(JSON.stringify({ token: r.token, accountId: r.accountId }));
+      res.end(JSON.stringify({ token: r.token, accountId: r.accountId, membershipUntil: r.membershipUntil }));
     });
     return;
   }
@@ -290,6 +357,24 @@ function requestHandler(req, res) {
       const salt = crypto.randomBytes(16).toString("hex");
       db.updatePassword(acc.id, salt, hashPw(p.password, salt));
       return res.end(JSON.stringify({ ok: true }));
+    });
+    return;
+  }
+
+  // Redeem a membership code (auth via the JWT issued at login).
+  if (req.method === "POST" && req.url === "/api/redeem") {
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").toString().split(",")[0].trim();
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let p; try { p = JSON.parse(body || "{}"); } catch { p = {}; }
+      res.setHeader("content-type", "application/json");
+      if (rateLimited("redeem|" + ip)) { res.writeHead(429); return res.end(JSON.stringify({ error: "尝试过于频繁，请稍后再试" })); }
+      const accountId = verifyToken(p.token);
+      if (!accountId) { res.writeHead(401); return res.end(JSON.stringify({ error: "登录已失效，请重新登录" })); }
+      const r = redeem(accountId, p.code);
+      if (r.error) { res.writeHead(400); return res.end(JSON.stringify({ error: r.error })); }
+      return res.end(JSON.stringify({ ok: true, membershipUntil: r.membershipUntil }));
     });
     return;
   }
@@ -357,6 +442,13 @@ wss.on("connection", (ws) => {
       const accountId = verifyToken(m.token);
       if (!accountId) { sendJson(ws, { type: "error", message: "invalid token" }); return ws.close(4001); }
       if (m.role !== "agent" && m.role !== "phone") { sendJson(ws, { type: "error", message: "bad role" }); return ws.close(4002); }
+      // Membership gate: cloud relay requires an active membership. LAN mode does
+      // not go through the broker, so it stays free regardless.
+      const acct = db.getById(accountId);
+      if (!isMember(acct)) {
+        sendJson(ws, { type: "error", code: "membership_required", message: "云端会员未开通或已过期，请用兑换码开通后使用（局域网模式免费）。" });
+        return ws.close(4003);
+      }
       ws.accountId = accountId; ws.role = m.role; ws.pubkey = m.pubkey || null;
       const rm = room(accountId);
       rm[m.role] = ws;
