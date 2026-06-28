@@ -129,6 +129,7 @@ function redeem(accountId, codeRaw) {
   const c = db.getCode(code);
   if (!c) return { error: "兑换码无效" };
   if (c.redeemed_by) return { error: "兑换码已被使用" };
+  if (c.expires_at && c.expires_at < Date.now()) return { error: "兑换码已过期" };
   if (!db.redeemCode(code, accountId, Date.now())) return { error: "兑换码已被使用" }; // lost the atomic race
   const acc = db.getById(accountId);
   const base = Math.max(Date.now(), acc.membership_until || 0); // stack onto remaining time
@@ -278,21 +279,22 @@ async function handleAdmin(req, res) {
     const b = await readBody(req);
     const count = Math.max(1, Math.min(500, Number(b.count) || 1));
     const lifetime = !!b.lifetime;
-    const days = lifetime ? 0 : Math.max(1, Number(b.days) || 30);
+    const days = lifetime ? 0 : Math.max(1, Math.min(36500, Number(b.days) || 30));
+    const expiresAt = Number(b.expiresAt) > 0 ? Number(b.expiresAt) : null; // code redemption deadline; null = never
     const note = (b.note || "").toString().slice(0, 120);
     const out = [];
     for (let i = 0; i < count; i++) {
       let code, tries = 0;
       do { code = genCode(); tries++; } while (db.getCode(code) && tries < 5);
-      try { db.createCode({ code, days, lifetime, note, created_at: Date.now() }); out.push(code); } catch {}
+      try { db.createCode({ code, days, lifetime, note, created_at: Date.now(), expires_at: expiresAt }); out.push(code); } catch {}
     }
-    return res.end(JSON.stringify({ ok: true, codes: out, days, lifetime }));
+    return res.end(JSON.stringify({ ok: true, codes: out, days, lifetime, expiresAt }));
   }
   // List recent codes + stats.
   if (G && p === "/api/admin/codes") {
     const codes = db.listCodes(300).map((c) => ({
       code: c.code, days: c.days, lifetime: !!c.lifetime, note: c.note || "",
-      createdAt: c.created_at, used: !!c.redeemed_by, redeemedAt: c.redeemed_at || 0,
+      createdAt: c.created_at, expiresAt: c.expires_at || 0, used: !!c.redeemed_by, redeemedAt: c.redeemed_at || 0,
     }));
     return res.end(JSON.stringify({ stats: db.codeStats(), codes }));
   }

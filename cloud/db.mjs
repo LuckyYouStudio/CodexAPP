@@ -31,11 +31,16 @@ db.exec(`
     lifetime INTEGER NOT NULL DEFAULT 0,
     note TEXT,
     created_at INTEGER NOT NULL,
+    expires_at INTEGER,
     redeemed_by TEXT,
     redeemed_at INTEGER
   );
   CREATE INDEX IF NOT EXISTS idx_codes_redeemed ON codes(redeemed_by);
 `);
+
+// Migrate older `codes` tables (pre code-expiry) by adding the column.
+const _codeCols = db.prepare("PRAGMA table_info(codes)").all().map((c) => c.name);
+if (!_codeCols.includes("expires_at")) db.exec("ALTER TABLE codes ADD COLUMN expires_at INTEGER");
 
 // Migrate older DBs (created before later features) by adding the columns.
 const _cols = db.prepare("PRAGMA table_info(accounts)").all().map((c) => c.name);
@@ -74,8 +79,8 @@ export function setMembership(id, until) {
 
 // ---- redemption codes ----
 export function createCode(c) {
-  db.prepare("INSERT INTO codes (code,days,lifetime,note,created_at) VALUES (?,?,?,?,?)")
-    .run(c.code, c.days | 0, c.lifetime ? 1 : 0, c.note ?? null, c.created_at);
+  db.prepare("INSERT INTO codes (code,days,lifetime,note,created_at,expires_at) VALUES (?,?,?,?,?,?)")
+    .run(c.code, c.days | 0, c.lifetime ? 1 : 0, c.note ?? null, c.created_at, c.expires_at ?? null);
 }
 export function getCode(code) { return db.prepare("SELECT * FROM codes WHERE code = ?").get(code); }
 // Atomically claim an unused code; returns true if this call won the claim.
