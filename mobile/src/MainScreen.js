@@ -8,6 +8,7 @@ import ApprovalCard from "./ApprovalCard";
 import SettingsModal from "./SettingsModal";
 import SessionsModal from "./SessionsModal";
 import DiffModal from "./DiffModal";
+import MembershipScreen from "./MembershipScreen";
 import { ensureNotifPermission } from "./useRelay";
 
 const MONO = Platform.OS === "ios" ? "Menlo" : "monospace";
@@ -61,6 +62,7 @@ export default function MainScreen({ relay, onForget }) {
   const [showSettings, setShowSettings] = useState(false);
   const [showSessions, setShowSessions] = useState(false);
   const [showDiff, setShowDiff] = useState(false);
+  const [showRedeem, setShowRedeem] = useState(false);
   const scrollRef = useRef(null);
 
   const openSessions = () => { actions.listThreads(); setShowSessions(true); };
@@ -183,12 +185,16 @@ export default function MainScreen({ relay, onForget }) {
         <SettingsModal
           visible={showSettings}
           config={{ ...config, cwd: config.cwd || relayState.cwd }}
+          cloud={cloud}
+          membershipUntil={relay.membershipUntil}
+          onRedeem={() => { setShowSettings(false); setShowRedeem(true); }}
           onApply={(cfg) => { actions.applyConfig(cfg); setShowSettings(false); }}
           onNewThread={(cwd) => { actions.newThread(cwd); setShowSettings(false); }}
           onEnableNotif={enableNotif}
           onForget={forget}
           onClose={() => setShowSettings(false)}
         />
+        {showRedeem && <MembershipScreen relay={relay} onClose={() => setShowRedeem(false)} />}
 
         <SessionsModal
           visible={showSessions}

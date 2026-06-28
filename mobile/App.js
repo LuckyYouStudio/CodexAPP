@@ -6,9 +6,11 @@ import { loadProfile, saveProfile, clearProfile, profileReady, loadKeyPair } fro
 import { useRelay } from "./src/useRelay";
 import SetupScreen from "./src/SetupScreen";
 import MainScreen from "./src/MainScreen";
+import MembershipScreen from "./src/MembershipScreen";
 
 function Connected({ profile, keypair, onForget }) {
   const relay = useRelay(profile, keypair);
+  if (relay.conn === "needMembership") return <MembershipScreen relay={relay} onForget={onForget} />;
   return <MainScreen relay={relay} onForget={onForget} />;
 }
 
