@@ -203,17 +203,23 @@ async function startAgent() {
   if (!config.email || !config.password) { running = false; setStatus({ phase: "needLogin" }); return; }
   running = true;
   try {
-    setStatus({ phase: "startingCodex", email: config.email, brokerUrl: config.brokerUrl, error: "" });
+    setStatus({ phase: "loggingIn", email: config.email, brokerUrl: config.brokerUrl, error: "" });
+    const token = await login(); // validate creds BEFORE spawning Codex
+    setStatus({ phase: "startingCodex" });
     if (!bridge.state.codexConnected) await bridge.start();
     status.codexConnected = !!bridge.state.codexConnected;
-    setStatus({ phase: "loggingIn" });
-    const token = await login();
     setStatus({ phase: "connecting" });
     connect(token);
   } catch (e) {
-    setStatus({ phase: "error", error: String(e.message || e) });
-    console.error("[agent] start failed:", e.message);
-    if (running) setTimeout(startAgent, 3000);
+    const msg = String(e.message || e);
+    console.error("[agent] start failed:", msg);
+    // Auth problems won't fix themselves: drop back to the login form with a reason
+    // (and don't retry — this is what caused the 401→retry→429 rate-limit loop).
+    if (/login failed: 401/.test(msg)) { running = false; setStatus({ phase: "needLogin", error: "邮箱或密码错误，请重新登录" }); return; }
+    if (/login failed: 403/.test(msg)) { running = false; setStatus({ phase: "needLogin", error: "邮箱未验证：请先点验证邮件里的链接，再登录" }); return; }
+    const rate = /login failed: 429/.test(msg);
+    setStatus({ phase: "error", error: rate ? "登录过于频繁，60 秒后自动重试…" : ("连接失败：" + msg) });
+    if (running) setTimeout(startAgent, rate ? 60000 : 3000);
   }
 }
 
@@ -272,10 +278,9 @@ function startPanel(port, tries = 0) {
     const url = "http://127.0.0.1:" + port;
     console.log("[panel] 控制面板: " + url);
     console.log("[agent] device fingerprint:", status.fingerprint, " PAIRING CODE:", pairing.code);
-    // Open the panel only on first run (not yet logged in); a configured/autostart
-    // agent runs silently in the background (panel still reachable manually).
-    const loggedIn = !!(config.email && config.password);
-    if (process.platform === "win32" && !process.env.CODEXAPP_NO_OPEN && !loggedIn) { try { exec('start "" "' + url + '"'); } catch {} }
+    // Open the panel in the browser on run. The installer's autostart launcher sets
+    // CODEXAPP_NO_OPEN=1 so the background agent stays silent (panel still at this URL).
+    if (process.platform === "win32" && !process.env.CODEXAPP_NO_OPEN) { try { exec('start "" "' + url + '"'); } catch {} }
   });
 }
 
@@ -365,7 +370,10 @@ var LABEL={needLogin:"未登录",startingCodex:"正在启动本地 Codex…",log
 var COLOR={paired:"var(--accent)",waitingPeer:"var(--accent2)",pairing:"var(--accent2)",membership:"var(--danger)",error:"var(--danger)"};
 function render(s){
   if(s.phase==="needLogin"){$("auth").className="";$("panel").className="hidden";
-    if(s.brokerUrl&&!$("broker").value)$("broker").value=s.brokerUrl;return;}
+    if(s.brokerUrl&&!$("broker").value)$("broker").value=s.brokerUrl;
+    if(s.email&&!$("email").value)$("email").value=s.email;
+    if(s.error)$("msg").textContent="⚠ "+s.error;
+    return;}
   $("auth").className="hidden";$("panel").className="";
   var pill=$("pill");pill.textContent=LABEL[s.phase]||s.phase;pill.style.color="#042";pill.style.background=COLOR[s.phase]||"var(--muted)";
   var showPair=(s.phase==="pairing"||s.phase==="waitingPeer"||s.phase==="paired");

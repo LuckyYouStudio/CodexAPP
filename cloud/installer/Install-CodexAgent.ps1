@@ -44,7 +44,11 @@ if (-not (Test-Path $cfgPath)) {
 # Hidden auto-start: a .vbs in the Startup folder launches the exe with no window.
 $startup = [Environment]::GetFolderPath("Startup")
 $vbs = Join-Path $startup "CodexAppAgent.vbs"
-$vbsContent = 'CreateObject("Wscript.Shell").Run """' + $exe + '""", 0, False'
+# Set CODEXAPP_NO_OPEN so the background autostart doesn't pop a browser each boot
+# (the panel is still reachable at http://127.0.0.1:7878).
+$vbsContent = 'Dim sh: Set sh = CreateObject("Wscript.Shell")' + "`r`n" +
+              'sh.Environment("Process")("CODEXAPP_NO_OPEN") = "1"' + "`r`n" +
+              'sh.Run """' + $exe + '""", 0, False'
 [IO.File]::WriteAllText($vbs, $vbsContent)
 Write-Host "已设置开机自启 (隐藏窗口): $vbs"
 
