@@ -1,0 +1,189 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>CodexApp 管理后台</title>
+<style>
+  :root { --bg:#f3f4f6; --card:#fff; --line:#e5e7eb; --text:#111827; --muted:#6b7280; --accent:#10b981; --accent2:#2563eb; --danger:#ef4444; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--text); font-family:-apple-system,BlinkMacSystemFont,"Segoe UI","PingFang SC","Microsoft YaHei",sans-serif; }
+  .hidden { display:none !important; }
+  .muted { color:var(--muted); font-size:13px; }
+  .wrap { max-width:1000px; margin:0 auto; padding:24px 16px 60px; }
+  .login { min-height:100vh; display:flex; align-items:center; justify-content:center; padding:20px; }
+  .card { background:var(--card); border:1px solid var(--line); border-radius:14px; padding:22px; margin-bottom:18px; box-shadow:0 1px 2px rgba(0,0,0,.04); }
+  .card.narrow { width:100%; max-width:380px; }
+  h1 { font-size:22px; margin:0 0 4px; } h2 { font-size:18px; margin:0; } h3 { font-size:14px; color:var(--muted); margin:18px 0 8px; }
+  .card-head { display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:16px; }
+  label { display:block; font-size:13px; color:var(--muted); margin:12px 0 5px; }
+  input[type=text],input[type=password],input[type=email],input[type=number] { width:100%; padding:10px 12px; border:1px solid var(--line); border-radius:9px; font-size:14px; outline:none; background:#fafafa; }
+  input:focus { border-color:var(--accent2); background:#fff; }
+  .grid { display:grid; grid-template-columns:1fr 1fr; gap:0 18px; }
+  .btn { border:1px solid var(--line); background:#fff; color:var(--text); border-radius:9px; padding:9px 16px; font-size:14px; font-weight:600; cursor:pointer; }
+  .btn.primary { background:var(--accent); color:#fff; border-color:var(--accent); }
+  .btn.ghost { background:#fff; }
+  .btn.sm { padding:5px 10px; font-size:12px; }
+  .btn.danger { color:var(--danger); border-color:#f3c0c0; }
+  .row { display:flex; justify-content:space-between; align-items:center; padding:14px 0 0; border-top:1px solid var(--line); margin-top:16px; }
+  .actions { display:flex; gap:10px; align-items:center; margin-top:16px; }
+  .actions input { max-width:260px; }
+  .switch { position:relative; width:44px; height:24px; }
+  .switch input { opacity:0; width:0; height:0; }
+  .slider { position:absolute; inset:0; background:#cbd5e1; border-radius:999px; transition:.2s; }
+  .slider:before { content:""; position:absolute; width:18px; height:18px; left:3px; top:3px; background:#fff; border-radius:50%; transition:.2s; }
+  .switch input:checked + .slider { background:var(--accent); }
+  .switch input:checked + .slider:before { transform:translateX(20px); }
+  .stats { display:flex; gap:14px; flex-wrap:wrap; }
+  .stat { background:#f9fafb; border:1px solid var(--line); border-radius:10px; padding:12px 16px; min-width:120px; }
+  .stat .n { font-size:24px; font-weight:800; } .stat .l { color:var(--muted); font-size:12px; }
+  table { width:100%; border-collapse:collapse; font-size:13px; }
+  th,td { text-align:left; padding:8px 6px; border-bottom:1px solid var(--line); }
+  th { color:var(--muted); font-weight:600; }
+  .tag { font-size:11px; padding:2px 8px; border-radius:999px; }
+  .tag.ok { background:#dcfce7; color:#166534; } .tag.no { background:#fee2e2; color:#991b1b; }
+  .dot { display:inline-block; width:8px; height:8px; border-radius:50%; background:#cbd5e1; margin-right:5px; } .dot.on { background:var(--accent); }
+</style>
+</head>
+<body>
+  <!-- login -->
+  <div id="login" class="login">
+    <div class="card narrow">
+      <h1>CodexApp 管理后台</h1>
+      <p class="muted">输入管理员令牌进入（broker.env 的 ADMIN_TOKEN）</p>
+      <label>管理员令牌</label>
+      <input id="token" type="password" />
+      <button id="loginBtn" class="btn primary" style="width:100%;margin-top:14px">进入</button>
+      <p id="loginMsg" class="muted"></p>
+    </div>
+  </div>
+
+  <!-- admin -->
+  <div id="admin" class="wrap hidden">
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:16px">
+      <h1 style="margin:0">CodexApp 管理后台</h1>
+      <button id="logout" class="btn ghost sm">退出</button>
+    </div>
+
+    <!-- SMTP -->
+    <section class="card">
+      <div class="card-head">
+        <div><h2>SMTP 设置</h2><p class="muted">配置用于发送验证码的邮件服务</p></div>
+        <button id="testBtn" class="btn ghost">测试连接</button>
+      </div>
+      <div class="grid">
+        <div><label>SMTP 主机</label><input id="s_host" type="text" placeholder="smtp.gmail.com" /></div>
+        <div><label>SMTP 端口</label><input id="s_port" type="number" placeholder="465" /></div>
+        <div><label>SMTP 用户名</label><input id="s_user" type="text" placeholder="you@gmail.com" /></div>
+        <div><label>SMTP 密码</label><input id="s_pass" type="password" /><p id="passHint" class="muted" style="margin:5px 0 0"></p></div>
+        <div><label>发件人邮箱</label><input id="s_from" type="text" placeholder="you@gmail.com" /></div>
+        <div><label>发件人名称</label><input id="s_fromname" type="text" placeholder="CodexApp" /></div>
+      </div>
+      <div class="row">
+        <div><div style="font-weight:600">使用 TLS</div><div class="muted">为 SMTP 连接启用 TLS 加密（465 端口请开启）</div></div>
+        <label class="switch"><input id="s_secure" type="checkbox" /><span class="slider"></span></label>
+      </div>
+      <div class="actions">
+        <input id="testTo" type="email" placeholder="发送测试邮件到（可选）" />
+        <button id="saveBtn" class="btn primary">保存</button>
+      </div>
+      <p id="smtpMsg" class="muted"></p>
+    </section>
+
+    <!-- overview -->
+    <section class="card">
+      <h2>概览</h2>
+      <div id="stats" class="stats" style="margin-top:14px"></div>
+      <h3>在线</h3><div id="online" class="muted">—</div>
+      <h3>用户</h3><div id="users"></div>
+    </section>
+  </div>
+
+<script>
+const $ = (id) => document.getElementById(id);
+let TOKEN = sessionStorage.getItem("codexapp.admin") || "";
+
+async function api(path, method = "GET", body) {
+  const r = await fetch(path, {
+    method,
+    headers: { "x-admin-token": TOKEN, ...(body ? { "content-type": "application/json" } : {}) },
+    body: body ? JSON.stringify(body) : undefined,
+  });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) throw new Error(j.error || r.status);
+  return j;
+}
+
+$("loginBtn").onclick = async () => {
+  TOKEN = $("token").value.trim();
+  try { await api("/api/admin/login", "POST", {}); sessionStorage.setItem("codexapp.admin", TOKEN); enter(); }
+  catch (e) { $("loginMsg").textContent = "登录失败：" + e.message; }
+};
+$("logout").onclick = () => { sessionStorage.removeItem("codexapp.admin"); location.reload(); };
+
+function enter() { $("login").classList.add("hidden"); $("admin").classList.remove("hidden"); loadSmtp(); loadOverview(); }
+
+async function loadSmtp() {
+  try {
+    const c = await api("/api/admin/smtp");
+    $("s_host").value = c.host || ""; $("s_port").value = c.port || ""; $("s_user").value = c.user || "";
+    $("s_from").value = c.from || ""; $("s_fromname").value = c.fromName || ""; $("s_secure").checked = !!c.secure;
+    $("passHint").textContent = c.hasPass ? "密码已配置，留空以保留当前值。" : "未配置密码。";
+  } catch (e) { $("smtpMsg").textContent = "读取失败：" + e.message; }
+}
+$("saveBtn").onclick = async () => {
+  $("smtpMsg").textContent = "保存中…";
+  try {
+    await api("/api/admin/smtp", "POST", {
+      host: $("s_host").value.trim(), port: Number($("s_port").value) || 587, user: $("s_user").value.trim(),
+      pass: $("s_pass").value, from: $("s_from").value.trim(), fromName: $("s_fromname").value.trim(), secure: $("s_secure").checked,
+    });
+    $("s_pass").value = ""; $("smtpMsg").textContent = "✅ 已保存（立即生效）"; loadSmtp();
+  } catch (e) { $("smtpMsg").textContent = "保存失败：" + e.message; }
+};
+$("testBtn").onclick = async () => {
+  $("smtpMsg").textContent = "测试中…（请先保存）";
+  try {
+    const r = await api("/api/admin/smtp/test", "POST", { to: $("testTo").value.trim() });
+    $("smtpMsg").textContent = r.ok ? ("✅ 连接成功" + ($("testTo").value.trim() ? "，测试邮件已发送" : "")) : ("❌ 失败：" + r.error);
+  } catch (e) { $("smtpMsg").textContent = "测试失败：" + e.message; }
+};
+
+async function loadOverview() {
+  try {
+    const d = await api("/api/admin/overview");
+    $("stats").innerHTML =
+      `<div class="stat"><div class="n">${d.counts.total}</div><div class="l">总用户</div></div>` +
+      `<div class="stat"><div class="n">${d.counts.verified}</div><div class="l">已验证</div></div>` +
+      `<div class="stat"><div class="n">${d.online.length}</div><div class="l">在线账号</div></div>`;
+    $("online").innerHTML = d.online.length
+      ? d.online.map((o) => `<div><span class="dot on"></span>${esc(o.email)} — 电脑端${o.agent ? "✓" : "✗"} / 客户端${o.phone ? "✓" : "✗"}</div>`).join("")
+      : '<span class="muted">当前无在线连接</span>';
+    $("users").innerHTML =
+      `<table><thead><tr><th>邮箱</th><th>状态</th><th>注册时间</th><th>操作</th></tr></thead><tbody>` +
+      d.users.map((u) => `<tr>
+        <td>${esc(u.email)}</td>
+        <td>${u.verified ? '<span class="tag ok">已验证</span>' : '<span class="tag no">未验证</span>'}</td>
+        <td>${new Date(u.createdAt).toLocaleString()}</td>
+        <td>
+          ${u.verified ? "" : `<button class="btn sm" onclick="act('verify','${u.id}')">标记验证</button> <button class="btn sm" onclick="act('resend','${u.id}','${esc(u.email)}')">重发</button>`}
+          <button class="btn sm danger" onclick="act('delete','${u.id}','${esc(u.email)}')">删除</button>
+        </td></tr>`).join("") +
+      `</tbody></table>`;
+  } catch (e) { $("users").innerHTML = '<span class="muted">读取失败：' + esc(e.message) + "</span>"; }
+}
+function esc(s){return String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));}
+window.act = async (action, id, email) => {
+  if (action === "delete" && !confirm("确定删除账号 " + email + "？")) return;
+  try {
+    if (action === "verify") await api("/api/admin/user/verify", "POST", { id });
+    if (action === "resend") await api("/api/admin/user/resend", "POST", { email });
+    if (action === "delete") await api("/api/admin/user/delete", "POST", { id });
+    loadOverview();
+  } catch (e) { alert("操作失败：" + e.message); }
+};
+
+if (TOKEN) enter();
+</script>
+</body>
+</html>

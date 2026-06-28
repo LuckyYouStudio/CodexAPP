@@ -21,7 +21,30 @@ db.exec(`
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_accounts_verify_token ON accounts(verify_token);
+  CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 `);
+
+// ---- key/value settings (e.g. SMTP config editable from the admin UI) ----
+export function getSetting(key) {
+  const r = db.prepare("SELECT value FROM settings WHERE key = ?").get(key);
+  return r ? r.value : null;
+}
+export function setSetting(key, value) {
+  db.prepare("INSERT INTO settings (key,value) VALUES (?,?) ON CONFLICT(key) DO UPDATE SET value=excluded.value")
+    .run(key, value == null ? null : String(value));
+}
+
+// ---- admin helpers ----
+export function getById(id) { return db.prepare("SELECT * FROM accounts WHERE id = ?").get(id); }
+export function listAccounts(limit = 200) {
+  return db.prepare("SELECT id,email,email_verified,created_at FROM accounts ORDER BY created_at DESC LIMIT ?").all(limit);
+}
+export function counts() {
+  const total = db.prepare("SELECT COUNT(*) n FROM accounts").get().n;
+  const verified = db.prepare("SELECT COUNT(*) n FROM accounts WHERE email_verified = 1").get().n;
+  return { total, verified };
+}
+export function deleteAccount(id) { db.prepare("DELETE FROM accounts WHERE id = ?").run(id); }
 
 export function getByEmail(email) {
   return db.prepare("SELECT * FROM accounts WHERE email = ?").get(email);

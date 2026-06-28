@@ -17,7 +17,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import * as db from "./db.mjs";
-import { sendVerifyEmail, emailConfigured } from "./mailer.mjs";
+import { sendVerifyEmail, emailConfigured, testSmtp, getSmtpConfig } from "./mailer.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ACCOUNTS_FILE = path.join(__dirname, "accounts.json");
@@ -34,6 +34,7 @@ const HOST = process.env.HOST || "0.0.0.0";
 // TLS: set TLS_CERT + TLS_KEY (PEM paths) for wss/https; otherwise plain ws/http.
 const TLS_CERT = process.env.TLS_CERT;
 const TLS_KEY = process.env.TLS_KEY;
+const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ""; // set to enable the /admin backend
 // Dev convenience: auto-create an account on first login. Disable in prod.
 // ---- accounts (SQLite) + signed tokens + email verification ----
 const migrated = db.migrateFromJson(ACCOUNTS_FILE); // one-time import from legacy accounts.json
@@ -124,8 +125,78 @@ function verifyPage(title, msg) {
 </div></body>`;
 }
 
+// ---- admin backend (gated by ADMIN_TOKEN) ----
+function readBody(req) {
+  return new Promise((resolve) => {
+    let b = ""; req.on("data", (c) => { b += c; if (b.length > 8192) req.destroy(); });
+    req.on("end", () => { try { resolve(JSON.parse(b || "{}")); } catch { resolve({}); } });
+  });
+}
+function adminOk(req) {
+  const t = String(req.headers["x-admin-token"] || "");
+  return !!ADMIN_TOKEN && t.length === ADMIN_TOKEN.length && crypto.timingSafeEqual(Buffer.from(t), Buffer.from(ADMIN_TOKEN));
+}
+async function handleAdmin(req, res) {
+  res.setHeader("content-type", "application/json");
+  if (!ADMIN_TOKEN) { res.writeHead(503); return res.end(JSON.stringify({ error: "admin 未启用：请在 broker.env 设置 ADMIN_TOKEN 后重启" })); }
+  if (!adminOk(req)) { res.writeHead(401); return res.end(JSON.stringify({ error: "无效管理员令牌" })); }
+  const p = new URL(req.url, "http://localhost").pathname;
+  const G = req.method === "GET", P = req.method === "POST";
+
+  if (P && p === "/api/admin/login") return res.end(JSON.stringify({ ok: true }));
+
+  if (G && p === "/api/admin/smtp") {
+    const c = getSmtpConfig();
+    return res.end(JSON.stringify({ host: c.host, port: c.port, user: c.user, from: c.from, fromName: c.fromName, secure: c.secure, hasPass: !!c.pass }));
+  }
+  if (P && p === "/api/admin/smtp") {
+    const b = await readBody(req);
+    db.setSetting("smtp_host", b.host || "");
+    db.setSetting("smtp_port", String(b.port || 587));
+    db.setSetting("smtp_user", b.user || "");
+    if (b.pass) db.setSetting("smtp_pass", b.pass); // blank = keep current
+    db.setSetting("smtp_from", b.from || "");
+    db.setSetting("smtp_from_name", b.fromName || "");
+    db.setSetting("smtp_secure", b.secure ? "1" : "0");
+    return res.end(JSON.stringify({ ok: true }));
+  }
+  if (P && p === "/api/admin/smtp/test") {
+    const b = await readBody(req);
+    return res.end(JSON.stringify(await testSmtp(b.to || "")));
+  }
+
+  if (G && p === "/api/admin/overview") {
+    const online = [];
+    for (const [aid, r] of rooms) {
+      if (!r.agent && !r.phone) continue;
+      const acc = db.getById(aid);
+      online.push({ email: acc ? acc.email : aid.slice(0, 8), agent: !!r.agent, phone: !!r.phone });
+    }
+    const users = db.listAccounts(200).map((u) => ({ id: u.id, email: u.email, verified: !!u.email_verified, createdAt: u.created_at }));
+    return res.end(JSON.stringify({ counts: db.counts(), online, users }));
+  }
+  if (P && p === "/api/admin/user/verify") { const b = await readBody(req); if (b.id) db.setVerified(b.id); return res.end(JSON.stringify({ ok: true })); }
+  if (P && p === "/api/admin/user/resend") {
+    const b = await readBody(req);
+    const token = b.email && issueVerify(b.email);
+    if (token) { try { await sendVerifyEmail(b.email, baseUrl(req) + "/verify?token=" + token); } catch (e) { console.error(e.message); } }
+    return res.end(JSON.stringify({ ok: true }));
+  }
+  if (P && p === "/api/admin/user/delete") {
+    const b = await readBody(req);
+    if (b.id) {
+      const r = rooms.get(b.id);
+      if (r) { try { r.agent && r.agent.close(); r.phone && r.phone.close(); } catch {} }
+      db.deleteAccount(b.id);
+    }
+    return res.end(JSON.stringify({ ok: true }));
+  }
+  res.writeHead(404); res.end(JSON.stringify({ error: "未知接口" }));
+}
+
 // ---- HTTP(S) (auth + verification + web hosting) ----
 function requestHandler(req, res) {
+  if (req.url.startsWith("/api/admin")) return handleAdmin(req, res);
   if (req.method === "POST" && (req.url === "/api/login" || req.url === "/api/register" || req.url === "/api/resend-verification")) {
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").toString().split(",")[0].trim();
     let body = "";
@@ -148,7 +219,7 @@ function requestHandler(req, res) {
         const r = register(p.email, p.password);
         if (r.error === "exists") { res.writeHead(409); return res.end(JSON.stringify({ error: "账号已存在" })); }
         try { await sendVerifyEmail(p.email, baseUrl(req) + "/verify?token=" + r.verifyToken); } catch (e) { console.error("[mail]", e.message); }
-        return res.end(JSON.stringify({ ok: true, needVerify: true, emailSent: emailConfigured }));
+        return res.end(JSON.stringify({ ok: true, needVerify: true, emailSent: emailConfigured() }));
       }
 
       const r = login(p.email, p.password);
@@ -176,7 +247,7 @@ function requestHandler(req, res) {
   // Host the web client (so users just open https://<broker>/ and log in).
   if (req.method === "GET") {
     const url = new URL(req.url, "http://localhost");
-    const p = url.pathname === "/" ? "/index.html" : url.pathname;
+    const p = url.pathname === "/" ? "/index.html" : url.pathname === "/admin" ? "/admin.html" : url.pathname;
     const filePath = path.join(WEB_DIR, path.normalize(p).replace(/^(\.\.[\\/])+/, ""));
     if (filePath.startsWith(WEB_DIR) && fs.existsSync(filePath) && fs.statSync(filePath).isFile()) {
       res.writeHead(200, { "content-type": MIME[path.extname(filePath)] || "application/octet-stream" });
@@ -244,5 +315,5 @@ wss.on("connection", (ws) => {
 });
 
 server.listen(PORT, HOST, () => {
-  console.log(`CodexApp broker [${scheme}] on ${HOST}:${PORT}  email=${emailConfigured ? "SMTP" : "console-log (dev)"}`);
+  console.log(`CodexApp broker [${scheme}] on ${HOST}:${PORT}  email=${emailConfigured() ? "SMTP" : "console-log (dev)"}  admin=${ADMIN_TOKEN ? "on" : "off (set ADMIN_TOKEN)"}`);
 });

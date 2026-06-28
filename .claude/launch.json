@@ -6,6 +6,18 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["start"],
       "port": 4123
+    },
+    {
+      "name": "broker",
+      "runtimeExecutable": "node",
+      "runtimeArgs": ["cloud/broker.mjs"],
+      "port": 8787,
+      "env": {
+        "HOST": "127.0.0.1",
+        "PORT": "8787",
+        "ADMIN_TOKEN": "secret123",
+        "DB_PATH": "cloud/codexapp.db"
+      }
     }
   ]
 }

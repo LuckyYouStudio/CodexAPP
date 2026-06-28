@@ -9,7 +9,8 @@
 #
 # 装 Node22 + Caddy,拉代码,配 env,起 systemd 常驻,Caddy 自动 HTTPS。
 # 可重复运行(再次运行 = 更新代码 + 重启)。
-# 非交互:预先 export DOMAIN/ADMIN_EMAIL/SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM
+# 非交互:预先 export DOMAIN/ADMIN_EMAIL/SMTP_HOST/SMTP_PORT/SMTP_USER/SMTP_PASS/SMTP_FROM/ADMIN_TOKEN
+# ADMIN_TOKEN 不设则自动随机生成(并在结尾打印);重复运行会保留已有令牌。
 # ============================================================================
 set -euo pipefail
 
@@ -75,13 +76,20 @@ id -u "$RUN_USER" >/dev/null 2>&1 || useradd -r -s /usr/sbin/nologin "$RUN_USER"
 mkdir -p "$DATA_DIR"
 chown -R "$RUN_USER":"$RUN_USER" "$APP_DIR" "$DATA_DIR"
 
-# ---- env 文件(含 SMTP 密码,仅 root 可读) ----
+# ---- 管理后台令牌(保留已有,否则随机生成) ----
+if [ -z "${ADMIN_TOKEN:-}" ] && [ -f "$ENV_FILE" ]; then
+  ADMIN_TOKEN="$(grep -E '^ADMIN_TOKEN=' "$ENV_FILE" | head -1 | cut -d= -f2-)"
+fi
+[ -n "${ADMIN_TOKEN:-}" ] || ADMIN_TOKEN="$(openssl rand -hex 16 2>/dev/null || head -c16 /dev/urandom | od -An -tx1 | tr -d ' \n')"
+
+# ---- env 文件(含 SMTP 密码 + 管理令牌,仅 root 可读) ----
 mkdir -p /etc/codexapp
 cat > "$ENV_FILE" <<EOF
 HOST=127.0.0.1
 PORT=8787
 PUBLIC_URL=https://$DOMAIN
 DB_PATH=$DATA_DIR/codexapp.db
+ADMIN_TOKEN=$ADMIN_TOKEN
 SMTP_HOST=${SMTP_HOST:-}
 SMTP_PORT=${SMTP_PORT:-587}
 SMTP_USER=${SMTP_USER:-}
@@ -130,6 +138,9 @@ if command -v ufw >/dev/null 2>&1; then ufw allow 80,443/tcp >/dev/null 2>&1 || 
 echo
 echo "==================== 部署完成 ===================="
 echo "网页 / Broker : https://$DOMAIN/"
+echo "管理后台      : https://$DOMAIN/admin"
+echo "管理员令牌    : $ADMIN_TOKEN"
+echo "                (在 $ENV_FILE 的 ADMIN_TOKEN,可改后 systemctl restart $SERVICE)"
 echo "服务状态      : systemctl status $SERVICE"
 echo "实时日志      : journalctl -u $SERVICE -f"
 echo "改配置        : 编辑 $ENV_FILE 后  systemctl restart $SERVICE"
@@ -137,7 +148,7 @@ echo "更新代码      : 再次运行本脚本(git pull + 重启)"
 if [ -z "${SMTP_HOST:-}" ]; then
   echo
   echo "⚠ 未配置 SMTP:验证邮件发不出去(链接只会进日志)。"
-  echo "  请编辑 $ENV_FILE 填 SMTP_*,然后 systemctl restart $SERVICE"
+  echo "  最简单:打开 https://$DOMAIN/admin 用上面的令牌登录,在「SMTP 设置」里填(即时生效,免重启)。"
 fi
 echo "=================================================="
 echo

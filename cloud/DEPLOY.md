@@ -16,7 +16,7 @@
 curl -fsSL https://raw.githubusercontent.com/LuckyYouStudio/CodexAPP/main/cloud/deploy.sh -o deploy.sh
 sudo bash deploy.sh        # 按提示填:域名、管理员邮箱、SMTP
 ```
-脚本自动:装 Node22 + Caddy → 拉代码 → 配 `/etc/codexapp/broker.env` → systemd 常驻 Broker → Caddy 自动 HTTPS。完成后访问 `https://你的域名/` 即网页客户端。再次运行 = 更新代码 + 重启。
+脚本自动:装 Node22 + Caddy → 拉代码 → 配 `/etc/codexapp/broker.env`(含随机生成的 `ADMIN_TOKEN`)→ systemd 常驻 Broker → Caddy 自动 HTTPS。完成后访问 `https://你的域名/` 即网页客户端,`https://你的域名/admin` 是**管理后台**(脚本结尾会打印管理员令牌)。再次运行 = 更新代码 + 重启(保留原令牌)。
 
 下面是手动步骤(想自己控制时参考)。
 
@@ -59,7 +59,7 @@ After=network.target
 
 [Service]
 WorkingDirectory=/opt/codexapp
-Environment=HOST=127.0.0.1 PORT=8787 PUBLIC_URL=https://broker.yourdomain.com
+Environment=HOST=127.0.0.1 PORT=8787 PUBLIC_URL=https://broker.yourdomain.com ADMIN_TOKEN=换成够长的随机串
 Environment=SMTP_HOST=smtp.yourprovider.com SMTP_PORT=587 SMTP_USER=apikey SMTP_PASS=*** SMTP_FROM=no-reply@yourdomain.com
 ExecStart=/usr/bin/node cloud/broker.mjs
 Restart=always
@@ -71,6 +71,17 @@ WantedBy=multi-user.target
 ```bash
 sudo systemctl enable --now codexapp-broker
 ```
+
+## 管理后台
+
+访问 `https://broker.yourdomain.com/admin`,用 `ADMIN_TOKEN`(在 `broker.env`,一键部署会随机生成并在结尾打印)登录。功能:
+
+- **SMTP 设置**:可视化填发信邮箱(主机/端口/用户名/密码/发件人/TLS),**保存即时生效,无需重启**,带「测试连接」。这是配发验证邮件最省事的方式 —— 不必去服务器改 env。
+- **概览**:总用户 / 已验证数 / 当前在线账号(电脑端、客户端是否在线)。
+- **用户管理**:手动标记验证、重发验证邮件、删除账号(并断开其连接)。
+
+> SMTP 优先级:后台填的值(存在数据库)**覆盖** env 里的 `SMTP_*`。即未配 env 也行,登录后台填即可。
+> 没设 `ADMIN_TOKEN` 时 `/admin` 接口返回「admin 未启用」,纯手动部署记得在 `broker.env` 加一行 `ADMIN_TOKEN=<够长的随机串>`。
 
 ## 客户端怎么填
 
@@ -86,9 +97,11 @@ sudo systemctl enable --now codexapp-broker
 | `TLS_CERT` / `TLS_KEY` | 空 | PEM 路径；都设了才走 https/wss，否则 http/ws |
 | `PUBLIC_URL` | 自动推断 | 验证邮件里链接的域名，例 `https://broker.yourdomain.com`（Caddy 后建议显式设） |
 | `DB_PATH` | `cloud/codexapp.db` | SQLite 账号库路径 |
-| `SMTP_HOST` / `SMTP_PORT` | 空 | 发信服务器；**不设则验证链接只打到日志**（dev） |
+| `ADMIN_TOKEN` | 空 | 设了才启用 `/admin` 管理后台；登录令牌 |
+| `SMTP_HOST` / `SMTP_PORT` | 空 | 发信服务器；**不设则验证链接只打到日志**（dev）。后台填的值会覆盖这里 |
 | `SMTP_USER` / `SMTP_PASS` | 空 | 发信认证 |
 | `SMTP_FROM` | = `SMTP_USER` | 发件人地址 |
+| `SMTP_FROM_NAME` | 空 | 发件人显示名（后台「发件人名称」） |
 
 示例（带发信）：
 ```bash
@@ -99,7 +112,8 @@ HOST=127.0.0.1 PORT=8787 PUBLIC_URL=https://broker.yourdomain.com \
 
 ## 生产清单（重要）
 
-- **配 SMTP**（否则验证邮件发不出去，用户无法激活）。本地不配时验证链接会打到 Broker 日志，仅供测试。
+- **配 SMTP**（否则验证邮件发不出去，用户无法激活）。最省事:进 `/admin` → SMTP 设置 填写(即时生效)。本地不配时验证链接会打到 Broker 日志，仅供测试。
+- **设 `ADMIN_TOKEN`** 并妥善保管(一键部署已自动随机生成);它能进后台改 SMTP、删用户。
 - 账号库已是 **SQLite + JWT（带过期）+ 邮箱验证 + 登录限流**。备份 `codexapp.db` 和 `broker.secret`。
 - 防火墙只放行 443（和 SSH）。
 - Broker 看不到用户内容（端到端加密），但它是配对路由点——保证它本身不被入侵。
