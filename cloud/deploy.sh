@@ -43,32 +43,52 @@ SMTP_FROM="${SMTP_FROM:-no-reply@$DOMAIN}"
 
 export DEBIAN_FRONTEND=noninteractive
 
-# ---- Node >= 22 ----
+# ---- 包管理器检测(支持 Ubuntu/Debian 的 apt 和 CentOS/阿里云Linux 的 dnf/yum) ----
+if command -v apt-get >/dev/null 2>&1; then PM=apt
+elif command -v dnf >/dev/null 2>&1; then PM=dnf
+elif command -v yum >/dev/null 2>&1; then PM=yum
+else echo "未识别的包管理器(需要 apt / dnf / yum)"; exit 1; fi
+pkg_install() { case "$PM" in apt) apt-get update -y >/dev/null 2>&1; apt-get install -y "$@";; dnf) dnf install -y "$@";; yum) yum install -y "$@";; esac; }
+echo "[*] 包管理器: $PM"
+
+# ---- Node >= 22(发行版无关:从 npmmirror 下官方二进制,国内快) ----
 need_node=1
 if command -v node >/dev/null 2>&1; then
   [ "$(node -p 'process.versions.node.split(".")[0]')" -ge 22 ] && need_node=0
 fi
 if [ "$need_node" = 1 ]; then
   echo "[*] 安装 Node 22 ..."
-  curl -fsSL https://deb.nodesource.com/setup_22.x | bash -
-  apt-get install -y nodejs
+  command -v tar >/dev/null 2>&1 || pkg_install tar
+  command -v xz  >/dev/null 2>&1 || pkg_install xz || pkg_install xz-utils || true
+  NODE_MIRROR="${NODE_MIRROR:-https://registry.npmmirror.com/-/binary/node}"
+  NODE_VER="${NODE_VER:-$(curl -fsSL "$NODE_MIRROR/" 2>/dev/null | grep -oE 'v22\.[0-9]+\.[0-9]+/' | sort -V | tail -1 | tr -d '/' || true)}"
+  [ -n "$NODE_VER" ] || NODE_VER=v22.14.0
+  echo "    版本 $NODE_VER (源 $NODE_MIRROR)"
+  curl -fsSL -o /tmp/node.tar.xz "$NODE_MIRROR/$NODE_VER/node-$NODE_VER-linux-x64.tar.xz"
+  rm -rf /usr/local/lib/nodejs && mkdir -p /usr/local/lib/nodejs
+  tar -xJf /tmp/node.tar.xz -C /usr/local/lib/nodejs
+  for b in node npm npx; do ln -sf "/usr/local/lib/nodejs/node-$NODE_VER-linux-x64/bin/$b" "/usr/local/bin/$b"; done
+  hash -r
+  echo "    已安装: $(node -v)"
 fi
 
 # ---- git ----
-command -v git >/dev/null 2>&1 || { apt-get update -y; apt-get install -y git; }
+command -v git >/dev/null 2>&1 || pkg_install git
 
 # ---- Caddy(自动 HTTPS 反代) ----
 if ! command -v caddy >/dev/null 2>&1; then
   echo "[*] 安装 Caddy ..."
-  apt-get install -y debian-keyring debian-archive-keyring apt-transport-https curl gnupg || true
-  # 主路:cloudsmith apt 源(海外快;国内可能不稳,失败则走二进制兜底)
-  if curl -1sLf -m 20 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' 2>/dev/null | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null; then
-    curl -1sLf -m 20 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null || true
-    apt-get update -y >/dev/null 2>&1 && apt-get install -y caddy || true
+  # 主路(仅 apt):cloudsmith 源(海外快;国内可能不稳,失败则走二进制兜底)
+  if [ "$PM" = apt ]; then
+    apt-get install -y debian-keyring debian-archive-keyring apt-transport-https gnupg || true
+    if curl -1sLf -m 20 'https://dl.cloudsmith.io/public/caddy/stable/gpg.key' 2>/dev/null | gpg --dearmor -o /usr/share/keyrings/caddy-stable-archive-keyring.gpg 2>/dev/null; then
+      curl -1sLf -m 20 'https://dl.cloudsmith.io/public/caddy/stable/debian.deb.txt' > /etc/apt/sources.list.d/caddy-stable.list 2>/dev/null || true
+      apt-get update -y >/dev/null 2>&1 && apt-get install -y caddy || true
+    fi
   fi
-  # 兜底:直接下二进制 + 自建 systemd 服务(CADDY_URL 可覆盖,默认官方下载)
+  # 兜底(任意发行版):直接下二进制 + 自建 systemd 服务(CADDY_URL 可覆盖)
   if ! command -v caddy >/dev/null 2>&1; then
-    echo "[*] apt 源不可达,改用二进制安装 Caddy ..."
+    echo "[*] 改用二进制安装 Caddy ..."
     curl -fsSL -m 120 -o /usr/bin/caddy "${CADDY_URL:-https://caddyserver.com/api/download?os=linux&arch=amd64}"
     chmod +x /usr/bin/caddy
     id caddy >/dev/null 2>&1 || useradd --system --home /var/lib/caddy --create-home --shell /usr/sbin/nologin caddy
