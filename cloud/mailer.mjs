@@ -52,6 +52,20 @@ export async function sendVerifyEmail(to, link) {
   });
 }
 
+export async function sendResetEmail(to, link) {
+  const cfg = getSmtpConfig();
+  const t = buildTransport(cfg);
+  if (!t) { console.log(`[mailer] (SMTP 未配置) 给 ${to} 的重置密码链接：${link}`); return; }
+  await t.sendMail({
+    from: fromAddr(cfg), to,
+    subject: "重置你的 CodexApp 密码",
+    text: `我们收到了重置 CodexApp 密码的请求。点击下面的链接设置新密码（1 小时内有效）：\n${link}\n\n如果不是你本人操作，请忽略此邮件，你的密码不会改变。`,
+    html: `<p>我们收到了重置 CodexApp 密码的请求。点击下面的链接设置新密码（1 小时内有效）：</p>
+<p><a href="${link}">${link}</a></p>
+<p style="color:#888">如果不是你本人操作，请忽略此邮件，你的密码不会改变。</p>`,
+  });
+}
+
 // Verify SMTP connectivity; optionally send a test email to `to`.
 export async function testSmtp(to) {
   const t = buildTransport(getSmtpConfig());

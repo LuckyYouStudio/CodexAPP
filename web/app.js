@@ -98,6 +98,12 @@ $("cResend").onclick = async () => {
   try { await fetch("/api/resend-verification", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) }); } catch {}
   $("cMsg").textContent = "若该邮箱已注册，验证邮件已重新发送，请查收。";
 };
+$("cForgot").onclick = async () => {
+  const email = $("cEmail").value.trim();
+  if (!email) { $("cMsg").textContent = "请先填上面的邮箱，再点忘记密码。"; return; }
+  try { await fetch("/api/forgot-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) }); } catch {}
+  $("cMsg").textContent = "若该邮箱已注册，重置链接已发送，请查收邮件并按提示设置新密码。";
+};
 
 $("setupSave").onclick = () => {
   const url = $("setupUrl").value.trim().replace(/\/+$/, "");

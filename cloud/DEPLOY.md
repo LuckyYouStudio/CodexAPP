@@ -117,6 +117,7 @@ HOST=127.0.0.1 PORT=8787 PUBLIC_URL=https://broker.yourdomain.com \
 - 账号库已是 **SQLite + JWT（带过期）+ 邮箱验证 + 登录限流**。备份 `codexapp.db` 和 `broker.secret`。
 - 防火墙只放行 443（和 SSH）。
 - Broker 看不到用户内容（端到端加密），但它是配对路由点——保证它本身不被入侵。
-- 仍待接入：找回密码、APNs 推送（审批提醒）、计费/订阅。
+- 找回密码已就绪：登录页「忘记密码」→ 邮件链接 → `/reset` 设新密码（链接 1 小时有效，配 SMTP 才发得出；未配则链接打到日志）。
+- 仍待接入：APNs 推送（审批提醒）、计费/订阅。
 
 > 端到端加密 + 配对码已在协议层做好：即使 Broker 被攻破，也读不到内容，也无法冒充 Agent（配对码 SAS 校验）。详见 [README.md](README.md)。

@@ -17,7 +17,7 @@ import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 import { WebSocketServer } from "ws";
 import * as db from "./db.mjs";
-import { sendVerifyEmail, emailConfigured, testSmtp, getSmtpConfig } from "./mailer.mjs";
+import { sendVerifyEmail, sendResetEmail, emailConfigured, testSmtp, getSmtpConfig } from "./mailer.mjs";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ACCOUNTS_FILE = path.join(__dirname, "accounts.json");
@@ -40,6 +40,7 @@ const ADMIN_TOKEN = process.env.ADMIN_TOKEN || ""; // set to enable the /admin b
 const migrated = db.migrateFromJson(ACCOUNTS_FILE); // one-time import from legacy accounts.json
 if (migrated) console.log(`[broker] migrated ${migrated} accounts from accounts.json -> SQLite`);
 const VERIFY_TTL_MS = 24 * 3600 * 1000;
+const RESET_TTL_MS = 60 * 60 * 1000; // password-reset links expire in 1 hour
 const newVerifyToken = () => crypto.randomBytes(24).toString("base64url");
 function baseUrl(req) {
   if (process.env.PUBLIC_URL) return process.env.PUBLIC_URL.replace(/\/+$/, "");
@@ -99,6 +100,13 @@ function issueVerify(email) {
   db.setVerifyToken(acc.id, token, Date.now() + VERIFY_TTL_MS);
   return token;
 }
+function issueReset(email) {
+  const acc = db.getByEmail(email);
+  if (!acc) return null; // any existing account; completing the reset also verifies it
+  const token = newVerifyToken();
+  db.setResetToken(acc.id, token, Date.now() + RESET_TTL_MS);
+  return token;
+}
 
 // ---- login/register rate limiting (per IP+email sliding window) ----
 const attempts = new Map();
@@ -123,6 +131,37 @@ function verifyPage(title, msg) {
 <h1 style="font-size:22px">${title}</h1><p style="color:#8a98b8">${msg}</p>
 <a href="/" style="display:inline-block;margin-top:16px;background:#35d07f;color:#042;padding:12px 20px;border-radius:10px;text-decoration:none;font-weight:700">打开 CodexApp</a>
 </div></body>`;
+}
+
+// Server-rendered "set a new password" page (reached from the reset email link).
+function resetPage(token) {
+  const t = String(token).replace(/[^A-Za-z0-9_-]/g, ""); // base64url charset; safe to embed
+  return `<!doctype html><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>重置密码 · CodexApp</title>
+<body style="font-family:system-ui,-apple-system,'Segoe UI',sans-serif;background:#0b1220;color:#e6ecf7;display:flex;min-height:100vh;align-items:center;justify-content:center;margin:0">
+<div style="width:100%;max-width:380px;padding:32px">
+<h1 style="font-size:22px;text-align:center">设置新密码</h1>
+<label style="display:block;font-size:13px;color:#8a98b8;margin:16px 0 6px">新密码（至少 8 位）</label>
+<input id="pw" type="password" style="width:100%;box-sizing:border-box;padding:12px;border:1px solid #26314d;border-radius:10px;background:#121a2c;color:#e6ecf7;font-size:15px">
+<label style="display:block;font-size:13px;color:#8a98b8;margin:14px 0 6px">再次输入</label>
+<input id="pw2" type="password" style="width:100%;box-sizing:border-box;padding:12px;border:1px solid #26314d;border-radius:10px;background:#121a2c;color:#e6ecf7;font-size:15px">
+<button id="go" style="width:100%;margin-top:18px;background:#35d07f;color:#042;padding:13px;border:0;border-radius:10px;font-weight:700;font-size:15px;cursor:pointer">确认重置</button>
+<p id="msg" style="color:#8a98b8;font-size:13px;min-height:18px;margin:12px 0 0;text-align:center"></p>
+</div>
+<script>
+const $=id=>document.getElementById(id), TOKEN=${JSON.stringify(t)};
+$("go").onclick=async()=>{
+  const pw=$("pw").value, pw2=$("pw2").value, msg=$("msg");
+  if(pw.length<8){msg.textContent="密码至少 8 位";return;}
+  if(pw!==pw2){msg.textContent="两次输入不一致";return;}
+  $("go").disabled=true; msg.textContent="提交中…";
+  try{
+    const r=await fetch("/api/reset-password",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({token:TOKEN,password:pw})});
+    const j=await r.json().catch(()=>({}));
+    if(r.ok){document.querySelector("div").innerHTML='<h1 style=\\"font-size:22px;text-align:center\\">✅ 密码已重置</h1><p style=\\"color:#8a98b8;text-align:center\\">现在可以用新密码登录了。</p><a href=\\"/\\" style=\\"display:block;margin-top:16px;background:#35d07f;color:#042;padding:12px;border-radius:10px;text-decoration:none;font-weight:700;text-align:center\\">去登录</a>';}
+    else{msg.textContent="失败："+(j.error||r.status); $("go").disabled=false;}
+  }catch(e){msg.textContent="网络错误："+e.message; $("go").disabled=false;}
+};
+</script></body>`;
 }
 
 // ---- admin backend (gated by ADMIN_TOKEN) ----
@@ -197,7 +236,7 @@ async function handleAdmin(req, res) {
 // ---- HTTP(S) (auth + verification + web hosting) ----
 function requestHandler(req, res) {
   if (req.url.startsWith("/api/admin")) return handleAdmin(req, res);
-  if (req.method === "POST" && (req.url === "/api/login" || req.url === "/api/register" || req.url === "/api/resend-verification")) {
+  if (req.method === "POST" && (req.url === "/api/login" || req.url === "/api/register" || req.url === "/api/resend-verification" || req.url === "/api/forgot-password")) {
     const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").toString().split(",")[0].trim();
     let body = "";
     req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
@@ -210,6 +249,12 @@ function requestHandler(req, res) {
       if (req.url === "/api/resend-verification") {
         const token = issueVerify(p.email);
         if (token) { try { await sendVerifyEmail(p.email, baseUrl(req) + "/verify?token=" + token); } catch (e) { console.error("[mail]", e.message); } }
+        return res.end(JSON.stringify({ ok: true })); // don't reveal whether the account exists
+      }
+
+      if (req.url === "/api/forgot-password") {
+        const token = issueReset(p.email);
+        if (token) { try { await sendResetEmail(p.email, baseUrl(req) + "/reset?token=" + token); } catch (e) { console.error("[mail]", e.message); } }
         return res.end(JSON.stringify({ ok: true })); // don't reveal whether the account exists
       }
 
@@ -228,6 +273,38 @@ function requestHandler(req, res) {
       res.end(JSON.stringify({ token: r.token, accountId: r.accountId }));
     });
     return;
+  }
+
+  // Set a new password using a valid reset token (from the email link).
+  if (req.method === "POST" && req.url === "/api/reset-password") {
+    const ip = (req.headers["x-forwarded-for"] || req.socket.remoteAddress || "?").toString().split(",")[0].trim();
+    let body = "";
+    req.on("data", (c) => { body += c; if (body.length > 4096) req.destroy(); });
+    req.on("end", () => {
+      let p; try { p = JSON.parse(body || "{}"); } catch { p = {}; }
+      res.setHeader("content-type", "application/json");
+      if (rateLimited("reset|" + ip)) { res.writeHead(429); return res.end(JSON.stringify({ error: "尝试过于频繁，请稍后再试" })); }
+      const acc = p.token && db.getByResetToken(p.token);
+      if (!acc || !acc.reset_expires || acc.reset_expires < Date.now()) { res.writeHead(400); return res.end(JSON.stringify({ error: "重置链接无效或已过期" })); }
+      if (!validPassword(p.password)) { res.writeHead(400); return res.end(JSON.stringify({ error: "密码至少 8 位" })); }
+      const salt = crypto.randomBytes(16).toString("hex");
+      db.updatePassword(acc.id, salt, hashPw(p.password, salt));
+      return res.end(JSON.stringify({ ok: true }));
+    });
+    return;
+  }
+
+  // Password-reset link → render the "set new password" page.
+  if (req.method === "GET" && req.url.startsWith("/reset")) {
+    const url = new URL(req.url, "http://localhost");
+    const token = url.searchParams.get("token") || "";
+    const acc = token && db.getByResetToken(token);
+    res.setHeader("content-type", "text/html; charset=utf-8");
+    if (!acc || !acc.reset_expires || acc.reset_expires < Date.now()) {
+      res.writeHead(400);
+      return res.end(verifyPage("⚠ 链接无效或已过期", "重置链接有效期为 1 小时。请回到登录页重新点「忘记密码」。"));
+    }
+    return res.end(resetPage(token));
   }
 
   // Email verification link.

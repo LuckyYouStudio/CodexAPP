@@ -18,11 +18,19 @@ db.exec(`
     email_verified INTEGER NOT NULL DEFAULT 0,
     verify_token TEXT,
     verify_expires INTEGER,
+    reset_token TEXT,
+    reset_expires INTEGER,
     created_at INTEGER NOT NULL
   );
   CREATE INDEX IF NOT EXISTS idx_accounts_verify_token ON accounts(verify_token);
   CREATE TABLE IF NOT EXISTS settings (key TEXT PRIMARY KEY, value TEXT);
 `);
+
+// Migrate older DBs (created before password reset) by adding the columns.
+const _cols = db.prepare("PRAGMA table_info(accounts)").all().map((c) => c.name);
+if (!_cols.includes("reset_token")) db.exec("ALTER TABLE accounts ADD COLUMN reset_token TEXT");
+if (!_cols.includes("reset_expires")) db.exec("ALTER TABLE accounts ADD COLUMN reset_expires INTEGER");
+db.exec("CREATE INDEX IF NOT EXISTS idx_accounts_reset_token ON accounts(reset_token);");
 
 // ---- key/value settings (e.g. SMTP config editable from the admin UI) ----
 export function getSetting(key) {
@@ -62,6 +70,19 @@ export function setVerified(id) {
 }
 export function setVerifyToken(id, token, expires) {
   db.prepare("UPDATE accounts SET verify_token = ?, verify_expires = ? WHERE id = ?").run(token, expires, id);
+}
+
+// ---- password reset ----
+export function getByResetToken(token) {
+  return db.prepare("SELECT * FROM accounts WHERE reset_token = ?").get(token);
+}
+export function setResetToken(id, token, expires) {
+  db.prepare("UPDATE accounts SET reset_token = ?, reset_expires = ? WHERE id = ?").run(token, expires, id);
+}
+export function updatePassword(id, salt, hash) {
+  // Completing a reset link proves the user controls the inbox, so also mark the
+  // email verified and clear the pending reset token.
+  db.prepare("UPDATE accounts SET salt = ?, hash = ?, email_verified = 1, reset_token = NULL, reset_expires = NULL WHERE id = ?").run(salt, hash, id);
 }
 
 // One-time migration from the legacy accounts.json (marked verified so existing
