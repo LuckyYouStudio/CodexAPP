@@ -221,9 +221,11 @@ async function startAgent() {
     // (and don't retry — this is what caused the 401→retry→429 rate-limit loop).
     if (/login failed: 401/.test(msg)) { running = false; setStatus({ phase: "needLogin", error: "邮箱或密码错误，请重新登录" }); return; }
     if (/login failed: 403/.test(msg)) { running = false; setStatus({ phase: "needLogin", error: "邮箱未验证：请先点验证邮件里的链接，再登录" }); return; }
+    // On 429 back off long enough for the broker's 15-min rate window to clear
+    // (retrying too often just keeps it limited).
     const rate = /login failed: 429/.test(msg);
-    setStatus({ phase: "error", error: rate ? "登录过于频繁，60 秒后自动重试…" : ("连接失败：" + msg) });
-    if (running) setTimeout(startAgent, rate ? 60000 : 3000);
+    setStatus({ phase: "error", error: rate ? "登录过于频繁，5 分钟后自动重试…" : ("连接失败：" + msg) });
+    if (running) setTimeout(startAgent, rate ? 300000 : 3000);
   }
 }
 
