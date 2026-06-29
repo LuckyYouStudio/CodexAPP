@@ -113,6 +113,8 @@ CADDYEOF
 fi
 
 # ---- 拉取/更新代码 ----
+# 仓库归 $RUN_USER 所有,但脚本以 root 运行 -> 避免 git "dubious ownership" 报错。
+git config --global --add safe.directory "$APP_DIR" 2>/dev/null || true
 if [ -d "$APP_DIR/.git" ]; then
   echo "[*] 更新代码 ..."; git -C "$APP_DIR" pull --ff-only
 else
