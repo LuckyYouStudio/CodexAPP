@@ -16,16 +16,21 @@ import os from "node:os";
 import http from "node:http";
 import crypto from "node:crypto";
 import { exec } from "node:child_process";
-import { fileURLToPath } from "node:url";
 import { WebSocket } from "ws";
 import { CodexBridge } from "../core/codexBridge.mjs";
 import { loadOrCreateKeyPair, seal, open, fingerprint, sas } from "./e2e.mjs";
 
 function appDir() {
-  const exe = process.execPath;
-  const packaged = !/[\\/]node(\.exe)?$/i.test(exe);
-  if (packaged) return path.dirname(exe);
-  return path.dirname(fileURLToPath(import.meta.url));
+  // Per-user, writable, stable config dir — independent of where the binary/script
+  // lives (works for the node-pack, source run, SEA exe, and Electron alike).
+  const home = os.homedir();
+  if (process.platform === "win32") {
+    return path.join(process.env.APPDATA || path.join(home, "AppData", "Roaming"), "CodexApp");
+  }
+  if (process.platform === "darwin") {
+    return path.join(home, "Library", "Application Support", "CodexApp");
+  }
+  return path.join(process.env.XDG_CONFIG_HOME || path.join(home, ".config"), "codexapp");
 }
 // CODEXAPP_DIR lets a launcher (e.g. the Electron app) put config in a writable
 // per-user folder instead of next to the binary.

@@ -40,18 +40,18 @@ const nodeExe = process.env.CODEXAPP_NODE_EXE || process.execPath;
 fs.copyFileSync(nodeExe, path.join(PACK, "node.exe"));
 console.log("[node-pack] bundled node.exe from", nodeExe);
 
-// 3. double-click launcher (runs the bundled signed node.exe with agent.cjs)
+// 3. double-click launcher (runs the bundled signed node.exe with agent.cjs).
+//    ASCII-only echoes — cmd.exe mis-parses UTF-8 Chinese in .cmd files.
 fs.writeFileSync(path.join(PACK, "启动CodexApp.cmd"),
   "@echo off\r\n" +
-  "chcp 65001 >nul\r\n" +
-  "title CodexApp 电脑客户端\r\n" +
+  "title CodexApp\r\n" +
   "cd /d \"%~dp0\"\r\n" +
-  "echo CodexApp 正在启动……（用随附的受信任 Node 运行，Windows 不会拦截）\r\n" +
-  "echo 面板窗口会自动打开。关闭本窗口即退出 CodexApp。\r\n" +
+  "echo Starting CodexApp... (running via the bundled trusted Node; Windows won't block it)\r\n" +
+  "echo A login panel will open. Close this window to quit.\r\n" +
   "echo.\r\n" +
   "\"%~dp0node.exe\" \"%~dp0agent.cjs\"\r\n" +
   "echo.\r\n" +
-  "echo CodexApp 已退出。按任意键关闭。\r\n" +
+  "echo CodexApp exited. Press any key to close.\r\n" +
   "pause >nul\r\n");
 
 // 4. readme
