@@ -36,6 +36,7 @@ export function useRelay(profile, keypair) {
   const [tree, setTree] = useState({ projects: [], projectless: [] });
   const [agentFp, setAgentFp] = useState(null);
   const [paired, setPaired] = useState(false);
+  const [pairError, setPairError] = useState("");
   const [membershipUntil, setMembershipUntil] = useState(0);
 
   const wsRef = useRef(null);
@@ -142,15 +143,14 @@ export function useRelay(profile, keypair) {
         if (m.type === "e2e") {
           const inner = open(m, agentPubRef.current, keypair.secretKey);
           if (!inner) return;
-          if (inner.type === "needPairing") {
-            if (profile.pairCode && agentPubRef.current) {
-              const tag = sas(profile.pairCode, agentPubRef.current, keypair.publicKey);
-              ws.send(JSON.stringify({ type: "e2e", ...seal({ type: "pair", tag }, agentPubRef.current, keypair.secretKey) }));
-            } else { setConn("needCode"); }
+          // Agent online but this device isn't paired -> show the pairing screen (a step AFTER login).
+          if (inner.type === "needPairing") { setConn("needPairing"); return; }
+          if (inner.type === "paired") {
+            if (inner.ok) { setPaired(true); setPairError(""); setConn("open"); }
+            else { setPairError(inner.reason || "配对码不对，请重试"); }
             return;
           }
-          if (inner.type === "paired") { if (inner.ok) setPaired(true); else setConn("pairFailed"); return; }
-          if (inner.type === "hello") setPaired(true);
+          if (inner.type === "hello") { setPaired(true); setConn("open"); } // already-paired device auto-connects
           handle(inner);
           return;
         }
@@ -174,7 +174,7 @@ export function useRelay(profile, keypair) {
 
   useEffect(() => {
     aliveRef.current = true;
-    setEvents([]); setApprovals([]); setRelayState({}); setDiff(""); setTree({ projects: [], projectless: [] }); setPaired(false);
+    setEvents([]); setApprovals([]); setRelayState({}); setDiff(""); setTree({ projects: [], projectless: [] }); setPaired(false); setPairError("");
     membershipRef.current = false;
     connect();
     return () => { aliveRef.current = false; clearTimeout(timerRef.current); try { wsRef.current && wsRef.current.close(); } catch {} };
@@ -209,6 +209,15 @@ export function useRelay(profile, keypair) {
     } catch (e) { return { ok: false, error: String((e && e.message) || e) }; }
   }, [cloud, profile, connect]);
 
+  // Send the pairing SAS for a user-entered code (from the pairing screen).
+  const pair = useCallback((code) => {
+    const ap = agentPubRef.current, sock = wsRef.current;
+    if (!ap || !sock || sock.readyState !== 1) { setPairError("电脑端还没上线，请先在电脑端登录"); return false; }
+    sock.send(JSON.stringify({ type: "e2e", ...seal({ type: "pair", tag: sas(code, ap, keypair.publicKey) }, ap, keypair.secretKey) }));
+    setPairError("");
+    return true;
+  }, [keypair]);
+
   const actions = {
     prompt: (text, cwd) => send({ type: "prompt", text, cwd }),
     steer: (text) => send({ type: "steer", text }),
@@ -222,5 +231,5 @@ export function useRelay(profile, keypair) {
   };
 
   const connected = conn === "open" && (cloud ? (!!agentPubRef.current && paired && !!relayState.codexConnected) : !!relayState.codexConnected);
-  return { conn, connected, cloud, agentFp, relayState, config, events, approvals, diff, tree, actions, membershipUntil, redeem };
+  return { conn, connected, cloud, agentFp, relayState, config, events, approvals, diff, tree, actions, membershipUntil, redeem, pair, pairError };
 }
