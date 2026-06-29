@@ -32,8 +32,12 @@ function createWindow() {
     webPreferences: { contextIsolation: true },
   });
   win.setMenuBarVisibility(false);
-  // External links (e.g. the web client) open in the system browser, not in-app.
+  // External links (e.g. the broker/web client) open in the system DEFAULT browser,
+  // never inside the app window.
   win.webContents.setWindowOpenHandler(({ url }) => { shell.openExternal(url); return { action: "deny" }; });
+  win.webContents.on("will-navigate", (e, url) => {
+    if (!/^https?:\/\/(127\.0\.0\.1|localhost)(:|\/|$)/.test(url)) { e.preventDefault(); shell.openExternal(url); }
+  });
   waitAndLoad();
 }
 

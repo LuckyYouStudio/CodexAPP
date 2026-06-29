@@ -375,7 +375,7 @@ input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9p
 
   <div id="auth">
     <div class="tabs"><div id="tabLogin" class="tab on">登录</div><div id="tabReg" class="tab">注册</div></div>
-    <p class="hint" style="margin:0 0 10px">服务器：${CLOUD_BROKER}</p>
+    <p class="hint" style="margin:0 0 10px">服务器：<a href="${CLOUD_BROKER}" target="_blank" rel="noopener" style="color:var(--accent2)">${CLOUD_BROKER}</a></p>
     <label>邮箱</label><input id="email" placeholder="you@example.com" autocapitalize="off">
     <label>密码</label><input id="pass" type="password" placeholder="至少 8 位">
     <button id="loginBtn" class="btn primary">登录并启动</button>
@@ -411,7 +411,7 @@ input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9p
     </div>
     <p id="perr" class="msg"></p>
     <button id="logoutBtn" class="btn ghost">退出登录</button>
-    <p class="hint">网页客户端：用浏览器打开你的 Broker 地址（云端模式），用同一账号登录后即可连接。</p>
+    <p class="hint">网页客户端：在浏览器打开 <a href="${CLOUD_BROKER}" target="_blank" rel="noopener" style="color:var(--accent2)">${CLOUD_BROKER}</a> ，用同一账号登录后即可连接。</p>
   </div>
   <p class="hint" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px;line-height:1.6">🔒 安全说明：全程端到端加密。服务器只转发加密数据，看不到你的账号内容、Codex 对话、代码与命令。</p>
 </div>
