@@ -6,7 +6,8 @@
   "scripts": {
     "bundle": "node build.mjs",
     "start": "node build.mjs && electron .",
-    "dist": "node build.mjs && electron-builder --win"
+    "dist": "node build.mjs && electron-builder --win",
+    "dist:portable": "node package.mjs"
   },
   "devDependencies": {
     "@electron/packager": "^20.0.1",

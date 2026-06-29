@@ -14,6 +14,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { signWindows, findSigntool } from "./sign-win.mjs";
 
 const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const DIST = path.join(ROOT, "dist");
@@ -86,16 +87,12 @@ if (isMac) {
 }
 if (!isWin) { try { fs.chmodSync(EXE, 0o755); } catch {} }
 
+// Code-sign for distribution (no-op unless CODEXAPP_SIGN_* is configured).
+if (isWin) {
+  const signed = signWindows(EXE, { label: path.basename(EXE) });
+  if (!signed) console.log("[build] (unsigned — set CODEXAPP_SIGN_* to code-sign; needed for SmartScreen/SAC)");
+}
+
 console.log("\n[build] done -> " + EXE);
 console.log("        size:", (fs.statSync(EXE).size / 1024 / 1024).toFixed(1) + " MB");
-if (isWin) console.log("        (unsigned — for distribution, code-sign it to avoid SmartScreen)");
 if (isMac) console.log("        (ad-hoc signed — for distribution, sign+notarize with an Apple Developer ID)");
-
-// Locate signtool for the optional Windows pre-strip.
-function findSigntool() {
-  const base = "C:\\Program Files (x86)\\Windows Kits\\10\\bin";
-  try {
-    return fs.readdirSync(base).map((d) => path.join(base, d, "x64", "signtool.exe"))
-      .filter((p) => fs.existsSync(p)).sort().reverse()[0] || null;
-  } catch { return null; }
-}
