@@ -410,7 +410,7 @@ input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9p
       <div class="row"><span class="k">已配对设备</span><span id="v_pin" class="v">—</span></div>
     </div>
     <p id="perr" class="msg"></p>
-    <button id="logoutBtn" class="btn ghost">退出登录</button>
+    <button id="logoutBtn" class="btn ghost" style="border-color:var(--danger);color:var(--danger)">退出账号</button>
     <p class="hint">网页客户端：在浏览器打开 <a href="${CLOUD_BROKER}" target="_blank" rel="noopener" style="color:var(--accent2)">${CLOUD_BROKER}</a> ，用同一账号登录后即可连接。</p>
   </div>
   <p class="hint" style="margin-top:14px;border-top:1px solid var(--line);padding-top:12px;line-height:1.6">🔒 安全说明：全程端到端加密。服务器只转发加密数据，看不到你的账号内容、Codex 对话、代码与命令。</p>
@@ -440,7 +440,10 @@ $("regBtn").onclick=function(){
      $("msg").textContent=o.j.emailSent?"✅ 验证邮件已发送，请查收并点链接验证，然后登录。":"账号已创建。未配 SMTP：验证链接在 Broker 日志里。验证后登录。";
    }).catch(function(e){$("msg").textContent="出错："+e.message});
 };
-$("logoutBtn").onclick=function(){fetch("/api/logout",{method:"POST"}).then(function(){location.reload()})};
+$("logoutBtn").onclick=function(){
+  if(!confirm("确定退出账号吗？将清除本机保存的登录，并断开连接，需要重新登录。"))return;
+  fetch("/api/logout",{method:"POST"}).then(function(){location.reload()});
+};
 $("copyCode").onclick=function(){
   var c=$("code").textContent.trim(); if(!c||c==="------")return;
   var done=function(){var b=$("copyCode");b.textContent="已复制";setTimeout(function(){b.textContent="复制";},1200);};
