@@ -93,3 +93,60 @@ Get-AuthenticodeSignature .\dist\CodexApp-Agent.exe | Format-List Status, Signer
 - **signtool.exe**:随 Windows SDK 提供(脚本会自动从 `Windows Kits\10\bin\*\x64` 找到)。
   没有的话装 “Windows SDK” 即可。
 - 联网(签名要访问时间戳服务器)。
+
+---
+
+## 附:Azure Trusted Signing 完整步骤(便宜 + 被 SAC 信任)
+
+约 $9.99/月,无需买硬件令牌。分三部分。
+
+### A. Azure 门户开通(你来做,含审核约 1–3 个工作日)
+
+1. 登录 <https://portal.azure.com>,绑定付款方式。
+2. 搜索并创建 **Trusted Signing Account** 资源:
+   - 选一个**支持的区域**(如 East US、West US 3、West Central US、North Europe、West Europe)。
+   - 定价档选 **Basic**(约 $9.99/月)。
+   - 记下 **账户名** 和该区域的 **Endpoint**(形如 `https://eus.codesigning.azure.net/`)。
+3. 在该账户下创建 **Identity Validation(身份验证)**:
+   - **组织**:需 3 年以上可查证的法人历史。
+   - **个人(Individual)**:走个人身份验证(已开放个人开发者)。
+   - 提交资料后等微软审核(几个工作日)。
+4. 审核通过后,创建 **Certificate Profile(证书配置)**:
+   - 类型选 **Public Trust**,关联上一步验证好的身份。
+   - 记下 **证书配置名(CertificateProfileName)**。
+5. 在 Trusted Signing 账户的 **访问控制 (IAM)** 里,给“将要用来签名的账号/服务主体”分配角色:
+   **Trusted Signing Certificate Profile Signer**。
+
+> 第 2–5 步都在 Azure 门户里,需要你的账号和身份资料,助手无法代办。
+
+### B. 本机工具(助手可帮你装/配)
+
+1. 装 **.NET SDK**(取签名 dlib 用)和 **Azure CLI**(登录认证用):
+   ```powershell
+   winget install Microsoft.DotNet.SDK.8
+   winget install Microsoft.AzureCLI
+   ```
+2. 取签名 dlib(`Azure.CodeSigning.Dlib.dll`):
+   ```powershell
+   nuget install Microsoft.Trusted.Signing.Client -OutputDirectory C:\trusted-signing
+   # dll 在 C:\trusted-signing\Microsoft.Trusted.Signing.Client.<ver>\bin\x64\Azure.CodeSigning.Dlib.dll
+   ```
+   (没有 nuget.exe 时,用 `dotnet` 还原一个含该包的工程也可以拿到这个 dll。)
+3. 登录有 **Signer 角色** 的账号:
+   ```powershell
+   az login
+   ```
+   (无人值守的自动化构建则改用服务主体环境变量 `AZURE_TENANT_ID` / `AZURE_CLIENT_ID` / `AZURE_CLIENT_SECRET`。)
+4. 复制 `trusted-signing.example.json` 为 `trusted-signing.json`,填上你的 **Endpoint / 账户名 / 证书配置名**。
+
+### C. 出签名包(命令不变)
+
+```powershell
+$env:CODEXAPP_SIGN_AZURE = "C:\test\CodexAPP\trusted-signing.json"
+$env:CODEXAPP_AZURE_DLIB = "C:\trusted-signing\Microsoft.Trusted.Signing.Client.<ver>\bin\x64\Azure.CodeSigning.Dlib.dll"
+
+node cloud\build-agent.mjs        # 单文件版
+cd desktop ; npm run dist:portable # 原生版 + zip
+```
+
+跑完用 `Get-AuthenticodeSignature` 应看到 `Status: Valid`,签名者为 Microsoft 颁发的 Public Trust 证书。

@@ -1,0 +1,6 @@
+{
+  "_comment": "Azure Trusted Signing 配置。复制成 trusted-signing.json 并填入你的真实值，然后设 CODEXAPP_SIGN_AZURE 指向它。Endpoint 用你 Trusted Signing 账户所在区域的 URL。",
+  "Endpoint": "https://eus.codesigning.azure.net/",
+  "CodeSigningAccountName": "your-trusted-signing-account",
+  "CertificateProfileName": "your-certificate-profile"
+}
