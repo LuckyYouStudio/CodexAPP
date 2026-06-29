@@ -237,6 +237,34 @@ function readJson(req) {
   });
 }
 
+// Open the panel as a chromeless app window (Edge/Chrome --app). Falls back to the
+// default browser if no Chromium browser is found.
+function openAppWindow(url) {
+  const size = "--window-size=460,780";
+  try {
+    if (process.platform === "win32") {
+      const pf = process.env.ProgramFiles || "C:\\Program Files";
+      const pf86 = process.env["ProgramFiles(x86)"] || "C:\\Program Files (x86)";
+      const lad = process.env.LOCALAPPDATA || "";
+      const candidates = [
+        pf + "\\Microsoft\\Edge\\Application\\msedge.exe",
+        pf86 + "\\Microsoft\\Edge\\Application\\msedge.exe",
+        pf + "\\Google\\Chrome\\Application\\chrome.exe",
+        pf86 + "\\Google\\Chrome\\Application\\chrome.exe",
+        lad + "\\Google\\Chrome\\Application\\chrome.exe",
+      ];
+      const exe = candidates.find((p) => { try { return p && fs.existsSync(p); } catch { return false; } });
+      if (exe) { exec(`"${exe}" --app="${url}" ${size}`); return; }
+      exec(`start "" "${url}"`); // fallback: default browser tab
+    } else if (process.platform === "darwin") {
+      // Try Chrome/Edge app mode, else default browser.
+      exec(`open -na "Google Chrome" --args --app="${url}" ${size} || open -na "Microsoft Edge" --args --app="${url}" ${size} || open "${url}"`);
+    } else {
+      exec(`xdg-open "${url}"`);
+    }
+  } catch {}
+}
+
 function startPanel(port, tries = 0) {
   const server = http.createServer(async (req, res) => {
     const send = (code, obj) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(obj)); };
@@ -283,14 +311,10 @@ function startPanel(port, tries = 0) {
     const url = "http://127.0.0.1:" + port;
     console.log("[panel] 控制面板: " + url);
     console.log("[agent] device fingerprint:", status.fingerprint, " PAIRING CODE:", pairing.code);
-    // Open the panel in the browser on run (Win/macOS/Linux). The installer's
-    // autostart launcher sets CODEXAPP_NO_OPEN=1 so the background agent stays silent.
-    if (!process.env.CODEXAPP_NO_OPEN) {
-      const cmd = process.platform === "win32" ? `start "" "${url}"`
-                : process.platform === "darwin" ? `open "${url}"`
-                : `xdg-open "${url}"`;
-      try { exec(cmd); } catch {}
-    }
+    // Open the panel as a standalone APP WINDOW (chromeless: no address bar/tabs),
+    // so it looks like a desktop client, not a web page. The installer's autostart
+    // launcher sets CODEXAPP_NO_OPEN=1 so the background agent stays silent.
+    if (!process.env.CODEXAPP_NO_OPEN) openAppWindow(url);
   });
 }
 
