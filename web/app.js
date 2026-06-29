@@ -48,17 +48,29 @@ function start() {
   else { showSetup(); }
 }
 function showSetup() {
-  $("app").classList.add("hidden");
+  hideAllScreens();
   $("setup").classList.remove("hidden");
   if (profile.email) $("cEmail").value = profile.email;
   if (profile.url) $("setupUrl").value = profile.url;
 }
+function hideAllScreens() {
+  ["setup", "register", "pairing", "membership", "app"].forEach((id) => $(id).classList.add("hidden"));
+}
 function showApp() {
-  $("setup").classList.add("hidden");
-  $("membership").classList.add("hidden");
+  hideAllScreens();
   $("app").classList.remove("hidden");
   $("redeemBtn").classList.toggle("hidden", profile.mode !== "cloud");
   updateMemberStatus();
+}
+function showRegister() {
+  hideAllScreens();
+  $("register").classList.remove("hidden");
+  $("rMsg").textContent = "";
+  if (profile.email) $("rEmail").value = profile.email;
+}
+function showPairing() {
+  hideAllScreens();
+  $("pairing").classList.remove("hidden");
 }
 
 // ---------------------------------------------------------------------------
@@ -75,8 +87,7 @@ function updateMemberStatus() {
   if (el) el.textContent = profile.mode === "cloud" ? "会员：" + fmtMember(memberUntil) : "局域网模式（免费）";
 }
 function showMembership(msg) {
-  $("setup").classList.add("hidden");
-  $("app").classList.add("hidden");
+  hideAllScreens();
   $("membership").classList.remove("hidden");
   $("mStatus").textContent = "当前：" + fmtMember(memberUntil);
   $("mMsg").textContent = msg || "";
@@ -119,29 +130,15 @@ function switchTab(m) {
 $("tabCloud").onclick = () => switchTab("cloud");
 $("tabLan").onclick = () => switchTab("lan");
 
-async function doCloud(register) {
+function doCloud() {
   const email = $("cEmail").value.trim();
   const password = $("cPass").value;
-  const pairCode = $("cCode").value.trim().toUpperCase();
   if (!email || !password) { $("cMsg").textContent = "请填邮箱和密码"; return; }
-  if (register) {
-    try {
-      const r = await fetch("/api/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password }) });
-      const j = await r.json().catch(() => ({}));
-      if (r.status === 409) { $("cMsg").textContent = "账号已存在，请直接登录。"; return; }
-      if (!r.ok) { $("cMsg").textContent = "注册失败：" + (j.error || r.status); return; }
-      $("cMsg").textContent = j.emailSent
-        ? "✅ 验证邮件已发送，请查收并点击链接，然后回来登录。"
-        : "账号已创建。SMTP 未配置：请在服务器日志里找到验证链接打开后再登录。";
-      $("cResend").classList.remove("hidden");
-      return; // wait for email verification, then the user logs in
-    } catch (e) { $("cMsg").textContent = "网络错误：" + e.message; return; }
-  }
-  saveProfile({ mode: "cloud", email, password, pairCode });
-  showApp(); connect();
+  saveProfile({ mode: "cloud", email, password });
+  showApp(); connect(); // pairing (if needed) is a step AFTER login, driven by the WS
 }
-$("cLogin").onclick = () => doCloud(false);
-$("cRegister").onclick = () => doCloud(true);
+$("cLogin").onclick = () => doCloud();
+$("cRegister").onclick = () => showRegister();
 $("cResend").onclick = async () => {
   const email = $("cEmail").value.trim();
   if (!email) { $("cMsg").textContent = "请填邮箱"; return; }
@@ -154,6 +151,42 @@ $("cForgot").onclick = async () => {
   try { await fetch("/api/forgot-password", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) }); } catch {}
   $("cMsg").textContent = "若该邮箱已注册，重置链接已发送，请查收邮件并按提示设置新密码。";
 };
+
+// ---- Register screen ----
+$("rBack").onclick = () => showSetup();
+$("rSubmit").onclick = async () => {
+  const email = $("rEmail").value.trim(), p1 = $("rPass").value, p2 = $("rPass2").value;
+  if (!email || !p1) { $("rMsg").textContent = "请填邮箱和密码"; return; }
+  if (p1.length < 8) { $("rMsg").textContent = "密码至少 8 位"; return; }
+  if (p1 !== p2) { $("rMsg").textContent = "两次密码不一致"; return; }
+  $("rMsg").textContent = "注册中…";
+  try {
+    const r = await fetch("/api/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email, password: p1 }) });
+    const j = await r.json().catch(() => ({}));
+    if (r.status === 409) { $("rMsg").textContent = "账号已存在，请返回登录。"; return; }
+    if (!r.ok) { $("rMsg").textContent = "注册失败：" + (j.error || r.status); return; }
+    $("rMsg").textContent = j.emailSent
+      ? "✅ 验证邮件已发送，请查收点链接验证，然后返回登录。"
+      : "账号已创建。未配 SMTP：验证链接在服务器日志里，打开后再登录。";
+    $("rResend").classList.remove("hidden");
+  } catch (e) { $("rMsg").textContent = "网络错误：" + e.message; }
+};
+$("rResend").onclick = async () => {
+  const email = $("rEmail").value.trim();
+  if (!email) { $("rMsg").textContent = "请填邮箱"; return; }
+  try { await fetch("/api/resend-verification", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email }) }); } catch {}
+  $("rMsg").textContent = "若该邮箱已注册，验证邮件已重新发送。";
+};
+
+// ---- Pairing screen ----
+$("pSubmit").onclick = () => {
+  const code = $("pCode").value.trim().toUpperCase();
+  if (!code) { $("pMsg").textContent = "请输入配对码"; return; }
+  if (!ws || ws.readyState !== WebSocket.OPEN || !agentPub) { $("pMsg").textContent = "电脑端还没上线，请先在电脑端登录"; return; }
+  $("pMsg").textContent = "配对中…";
+  ws.send(JSON.stringify({ type: "e2e", ...window.E2E.seal({ type: "pair", tag: window.E2E.sas(code, agentPub, keys.publicKey) }, agentPub, keys.secretKey) }));
+};
+$("pLogout").onclick = () => forget();
 
 $("setupSave").onclick = () => {
   const url = $("setupUrl").value.trim().replace(/\/+$/, "");
@@ -204,18 +237,29 @@ async function connectCloud() {
   ws.onmessage = (ev) => {
     let m; try { m = JSON.parse(ev.data); } catch { return; }
     if (m.type === "authed") { setConn(false, "等待电脑 Agent…"); if (m.peerOnline && m.peerPubkey) agentPub = m.peerPubkey; return; }
-    if (m.type === "peer") { agentPub = m.online ? m.pubkey : null; if (!m.online) { paired = false; appState.codexConnected = false; applyState(); } return; }
+    if (m.type === "peer") {
+      agentPub = m.online ? m.pubkey : null;
+      if (!m.online) {
+        paired = false; appState.codexConnected = false; applyState();
+        if (!$("pairing").classList.contains("hidden")) $("pStatus").textContent = "电脑端已离线，等待上线…";
+      }
+      return;
+    }
     if (m.type === "e2e") {
       const inner = window.E2E.open(m, agentPub, keys.secretKey);
       if (!inner) return;
       if (inner.type === "needPairing") {
-        if (profile.pairCode && agentPub) {
-          ws.send(JSON.stringify({ type: "e2e", ...window.E2E.seal({ type: "pair", tag: window.E2E.sas(profile.pairCode, agentPub, keys.publicKey) }, agentPub, keys.secretKey) }));
-        } else { setConn(false, "需要配对码"); }
+        // Agent online but this device isn't paired yet -> ask for the code (a step AFTER login).
+        showPairing();
+        $("pStatus").textContent = agentPub ? "✅ 电脑端在线，请输入配对码" : "等待电脑端上线…";
         return;
       }
-      if (inner.type === "paired") { if (inner.ok) paired = true; else setConn(false, "配对失败：" + (inner.reason || "")); return; }
-      if (inner.type === "hello") paired = true;
+      if (inner.type === "paired") {
+        if (inner.ok) { paired = true; showApp(); }      // bound -> straight to app
+        else { $("pMsg").textContent = "配对失败：" + (inner.reason || "配对码不对，请重试"); }
+        return;
+      }
+      if (inner.type === "hello") { paired = true; if ($("app").classList.contains("hidden")) showApp(); } // already-paired device auto-connects
       handle(inner);
       return;
     }
