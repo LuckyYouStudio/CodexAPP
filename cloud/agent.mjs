@@ -307,6 +307,15 @@ function startPanel(port, tries = 0) {
         setStatus({ phase: "needLogin", brokerConnected: false, peerOnline: false, paired: false, email: "" });
         return send(200, { ok: true });
       }
+      // Set a custom (memorable) pairing code, so you always know it even from afar.
+      if (req.method === "POST" && req.url === "/api/paircode") {
+        const b = await readJson(req);
+        const code = String(b.code || "").trim().toUpperCase();
+        if (code.length < 4 || code.length > 32 || !/^[A-Z0-9]+$/.test(code)) return send(400, { error: "配对码需 4-32 位字母或数字" });
+        pairing.code = code; savePairing(); status.pairingCode = code;
+        try { fs.writeFileSync(PAIRING_TXT, code + "\n"); } catch {}
+        return send(200, { ok: true });
+      }
       res.writeHead(404); res.end("not found");
     } catch (e) { send(500, { error: String(e.message || e) }); }
   });
@@ -371,6 +380,11 @@ input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9p
         <div id="code" class="code">------</div>
         <button id="copyCode" type="button" style="padding:8px 14px;font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--bg2);color:var(--text);border-radius:8px;cursor:pointer">复制</button>
       </div>
+      <div style="display:flex;gap:8px;margin-top:10px;justify-content:center">
+        <input id="newCode" placeholder="设自定义配对码(4-32位)" maxlength="32" style="flex:1;max-width:210px;padding:8px 10px;border:1px solid var(--line);border-radius:8px;background:var(--bg2);color:var(--text);font-size:13px">
+        <button id="setCode" type="button" style="padding:8px 14px;font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--bg2);color:var(--text);border-radius:8px;cursor:pointer">设置</button>
+      </div>
+      <div id="codeMsg" class="k" style="text-align:center;margin-top:6px"></div>
     </div>
     <div style="margin-top:14px">
       <div class="row"><span class="k"><span id="d_broker" class="dot"></span>Broker 连接</span><span id="v_broker" class="v">—</span></div>
@@ -415,6 +429,16 @@ $("copyCode").onclick=function(){
   var done=function(){var b=$("copyCode");b.textContent="已复制";setTimeout(function(){b.textContent="复制";},1200);};
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(c).then(done).catch(fallback);}else{fallback();}
   function fallback(){try{var r=document.createRange();r.selectNode($("code"));var s=getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");s.removeAllRanges();done();}catch(e){}}
+};
+$("setCode").onclick=function(){
+  var v=$("newCode").value.trim().toUpperCase();
+  if(v.length<4){$("codeMsg").textContent="配对码至少 4 位";return;}
+  $("codeMsg").textContent="设置中…";
+  fetch("/api/paircode",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({code:v})})
+   .then(function(r){return r.json()}).then(function(j){
+     if(j&&j.ok){$("codeMsg").textContent="✅ 已设为自定义配对码";$("newCode").value="";}
+     else $("codeMsg").textContent="失败："+((j&&j.error)||"");
+   }).catch(function(e){$("codeMsg").textContent="出错："+e.message});
 };
 
 var LABEL={needLogin:"未登录",startingCodex:"正在启动本地 Codex…",loggingIn:"正在登录…",connecting:"连接中…",waitingPeer:"已连接，等待客户端…",pairing:"等待配对（请输入配对码）",paired:"已连接 ✓ 可远程控制",membership:"云端会员未开通/已过期",error:"出错"};
