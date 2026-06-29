@@ -367,7 +367,10 @@ input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9p
     <div id="pill" class="pill" style="background:var(--bg2);color:var(--muted)">…</div>
     <div id="pairBox" class="hidden" style="margin-top:14px">
       <div class="k">在手机/网页客户端首次连接时输入配对码：</div>
-      <div id="code" class="code">------</div>
+      <div style="display:flex;align-items:center;justify-content:center;gap:10px">
+        <div id="code" class="code">------</div>
+        <button id="copyCode" type="button" style="padding:8px 14px;font-size:13px;font-weight:600;border:1px solid var(--line);background:var(--bg2);color:var(--text);border-radius:8px;cursor:pointer">复制</button>
+      </div>
     </div>
     <div style="margin-top:14px">
       <div class="row"><span class="k"><span id="d_broker" class="dot"></span>Broker 连接</span><span id="v_broker" class="v">—</span></div>
@@ -407,6 +410,12 @@ $("regBtn").onclick=function(){
    }).catch(function(e){$("msg").textContent="出错："+e.message});
 };
 $("logoutBtn").onclick=function(){fetch("/api/logout",{method:"POST"}).then(function(){location.reload()})};
+$("copyCode").onclick=function(){
+  var c=$("code").textContent.trim(); if(!c||c==="------")return;
+  var done=function(){var b=$("copyCode");b.textContent="已复制";setTimeout(function(){b.textContent="复制";},1200);};
+  if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(c).then(done).catch(fallback);}else{fallback();}
+  function fallback(){try{var r=document.createRange();r.selectNode($("code"));var s=getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");s.removeAllRanges();done();}catch(e){}}
+};
 
 var LABEL={needLogin:"未登录",startingCodex:"正在启动本地 Codex…",loggingIn:"正在登录…",connecting:"连接中…",waitingPeer:"已连接，等待客户端…",pairing:"等待配对（请输入配对码）",paired:"已连接 ✓ 可远程控制",membership:"云端会员未开通/已过期",error:"出错"};
 var COLOR={paired:"var(--accent)",waitingPeer:"var(--accent2)",pairing:"var(--accent2)",membership:"var(--danger)",error:"var(--danger)"};
