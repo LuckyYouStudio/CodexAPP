@@ -9,6 +9,7 @@
     "dist": "node build.mjs && electron-builder --win"
   },
   "devDependencies": {
+    "@electron/packager": "^20.0.1",
     "electron": "^33.0.0",
     "electron-builder": "^25.0.0",
     "esbuild": "^0.24.0"
@@ -16,7 +17,11 @@
   "build": {
     "appId": "com.codexapp.desktop",
     "productName": "CodexApp",
-    "files": ["main.js", "agent.cjs", "package.json"],
+    "files": [
+      "main.js",
+      "agent.cjs",
+      "package.json"
+    ],
     "win": {
       "target": "nsis",
       "artifactName": "CodexApp-Setup-${version}.${ext}"
