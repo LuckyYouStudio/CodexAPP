@@ -27,7 +27,10 @@ function appDir() {
   if (packaged) return path.dirname(exe);
   return path.dirname(fileURLToPath(import.meta.url));
 }
-const BASE = appDir();
+// CODEXAPP_DIR lets a launcher (e.g. the Electron app) put config in a writable
+// per-user folder instead of next to the binary.
+const BASE = process.env.CODEXAPP_DIR || appDir();
+try { fs.mkdirSync(BASE, { recursive: true }); } catch {}
 const CONFIG_FILE = path.join(BASE, "agent.config.json");
 const KEYS_FILE = path.join(BASE, "agent.keys.json");
 const PAIRING_FILE = path.join(BASE, "agent.pairing.json");
@@ -313,6 +316,7 @@ function startPanel(port, tries = 0) {
   });
   server.listen(port, "127.0.0.1", () => {
     const url = "http://127.0.0.1:" + port;
+    try { fs.writeFileSync(path.join(BASE, "panel.url"), url); } catch {} // so a launcher (Electron) knows the URL
     console.log("[panel] 控制面板: " + url);
     console.log("[agent] device fingerprint:", status.fingerprint, " PAIRING CODE:", pairing.code);
     // Open the panel as a standalone APP WINDOW (chromeless: no address bar/tabs),

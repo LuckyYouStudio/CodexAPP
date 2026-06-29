@@ -1,0 +1,30 @@
+{
+  "name": "codexapp-desktop",
+  "version": "1.0.0",
+  "description": "CodexApp 电脑客户端 (native desktop)",
+  "main": "main.js",
+  "scripts": {
+    "bundle": "node build.mjs",
+    "start": "node build.mjs && electron .",
+    "dist": "node build.mjs && electron-builder --win"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.0.0",
+    "esbuild": "^0.24.0"
+  },
+  "build": {
+    "appId": "com.codexapp.desktop",
+    "productName": "CodexApp",
+    "files": ["main.js", "agent.cjs", "package.json"],
+    "win": {
+      "target": "nsis",
+      "artifactName": "CodexApp-Setup-${version}.${ext}"
+    },
+    "nsis": {
+      "oneClick": true,
+      "perMachine": false,
+      "allowToChangeInstallationDirectory": false
+    }
+  }
+}
