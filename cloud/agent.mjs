@@ -100,6 +100,7 @@ let trusted = false;
 let backoff = 1000;
 let membershipWait = false; // true after a membership_required rejection (slow retry)
 let running = false;        // user has logged in / wants to be connected
+let authToken = null;       // cached JWT — reuse across WS reconnects (avoid re-login storms)
 
 const bridge = new CodexBridge(config, (msg) => {
   status.codexConnected = !!bridge.state.codexConnected;
@@ -186,7 +187,10 @@ function connect(token) {
       if (m.code === "membership_required") {
         membershipWait = true;
         setStatus({ phase: "membership", error: "云端会员未开通或已过期" });
-        console.error("[agent] 云端会员未开通或已过期。请在客户端用兑换码开通；将每 60 秒自动重试。(局域网模式不受影响)");
+        console.error("[agent] 云端会员未开通或已过期。请在客户端用兑换码开通后会自动连上;局域网模式不受影响。");
+      } else if (/token|invalid|auth/i.test(m.message || "")) {
+        authToken = null; // token rejected -> re-login on the next reconnect
+        setStatus({ error: "登录已失效，正在重新登录…" });
       } else { setStatus({ error: m.message || "broker error" }); console.error("[agent] broker error:", m.message); }
     }
   });
@@ -207,20 +211,19 @@ async function startAgent() {
   if (!config.email || !config.password) { running = false; setStatus({ phase: "needLogin" }); return; }
   running = true;
   try {
-    setStatus({ phase: "loggingIn", email: config.email, error: "" });
-    const token = await login(); // validate creds BEFORE spawning Codex
+    if (!authToken) { setStatus({ phase: "loggingIn", email: config.email, error: "" }); authToken = await login(); } // reuse token across reconnects
     setStatus({ phase: "startingCodex" });
     if (!bridge.state.codexConnected) await bridge.start();
     status.codexConnected = !!bridge.state.codexConnected;
     setStatus({ phase: "connecting" });
-    connect(token);
+    connect(authToken);
   } catch (e) {
     const msg = String(e.message || e);
     console.error("[agent] start failed:", msg);
     // Auth problems won't fix themselves: drop back to the login form with a reason
     // (and don't retry — this is what caused the 401→retry→429 rate-limit loop).
-    if (/login failed: 401/.test(msg)) { running = false; setStatus({ phase: "needLogin", error: "邮箱或密码错误，请重新登录" }); return; }
-    if (/login failed: 403/.test(msg)) { running = false; setStatus({ phase: "needLogin", error: "邮箱未验证：请先点验证邮件里的链接，再登录" }); return; }
+    if (/login failed: 401/.test(msg)) { authToken = null; running = false; setStatus({ phase: "needLogin", error: "邮箱或密码错误，请重新登录" }); return; }
+    if (/login failed: 403/.test(msg)) { authToken = null; running = false; setStatus({ phase: "needLogin", error: "邮箱未验证：请先点验证邮件里的链接，再登录" }); return; }
     // On 429 back off long enough for the broker's 15-min rate window to clear
     // (retrying too often just keeps it limited).
     const rate = /login failed: 429/.test(msg);
@@ -287,6 +290,7 @@ function startPanel(port, tries = 0) {
         const b = await readJson(req);
         config.email = (b.email || "").trim();
         config.password = b.password || "";
+        authToken = null; // new credentials -> fresh login
         saveConfig();
         setStatus({ email: config.email, error: "" });
         running = true;
@@ -295,7 +299,7 @@ function startPanel(port, tries = 0) {
         return send(200, { ok: true });
       }
       if (req.method === "POST" && req.url === "/api/logout") {
-        running = false; config.email = ""; config.password = ""; saveConfig();
+        running = false; authToken = null; config.email = ""; config.password = ""; saveConfig();
         try { ws && ws.close(); } catch {}
         setStatus({ phase: "needLogin", brokerConnected: false, peerOnline: false, paired: false, email: "" });
         return send(200, { ok: true });
