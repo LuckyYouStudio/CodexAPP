@@ -94,6 +94,7 @@ export default function SetupScreen({ initial, onConnect }) {
               <Text style={s.hint}>同一 WiFi 直连，电脑跑 npm start 会打印地址和 Token。</Text>
             </>
           )}
+          <Text style={s.security}>🔒 安全说明：全程端到端加密。服务器只转发加密数据，看不到你的账号内容、Codex 对话、代码与命令。</Text>
         </View>
       </ScrollView>
     </KeyboardAvoidingView>
@@ -114,6 +115,7 @@ const s = StyleSheet.create({
   label: { color: C.muted, fontSize: 13, marginTop: 12, marginBottom: 4 },
   input: { backgroundColor: C.bg2, color: C.text, borderColor: C.line, borderWidth: 1, borderRadius: 10, padding: 13, fontSize: 16 },
   hint: { color: C.muted, fontSize: 12, marginTop: 12 },
+  security: { color: C.muted, fontSize: 12, marginTop: 16, paddingTop: 12, borderTopWidth: 1, borderTopColor: C.line, lineHeight: 18 },
   msg: { color: C.muted, fontSize: 13, marginTop: 12 },
   btn: { backgroundColor: C.accent, borderRadius: 12, padding: 15, alignItems: "center", marginTop: 16 },
   btnText: { color: "#042", fontWeight: "800", fontSize: 17 },
