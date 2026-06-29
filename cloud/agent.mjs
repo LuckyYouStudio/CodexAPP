@@ -44,6 +44,8 @@ const DEFAULTS = {
   email: "", password: "", codexBin: "",
   defaultCwd: os.homedir(), approvalPolicy: "on-request", sandbox: "workspace-write", model: null,
   originator: "codex_vscode", panelPort: 7878,
+  // "open" = 同账号免码直连(像 TeamViewer);"code" = 需要配对码(更安全,防中间人)
+  pairingMode: "open",
 };
 
 function loadConfig() {
@@ -89,6 +91,7 @@ const status = {
   peerOnline: false,
   paired: false,
   pairingCode: pairing.code,
+  pairingMode: config.pairingMode,
   fingerprint: fingerprint(keys.publicKey),
   pinnedCount: pairing.pinnedPhones.length,
   email: config.email || "",
@@ -121,10 +124,11 @@ function sendSnapshot() { if (trusted) sendCtrl(bridge.snapshot()); }
 function onPhoneOnline(pubkey) {
   phonePubkey = pubkey;
   status.peerOnline = true;
-  if (pubkey && pairing.pinnedPhones.includes(pubkey)) {
+  // "open" mode: trust any client on this account (broker already gates by account) — no code.
+  if (config.pairingMode === "open" || (pubkey && pairing.pinnedPhones.includes(pubkey))) {
     trusted = true;
     setStatus({ phase: "paired", paired: true });
-    console.log("[agent] phone trusted (pinned) " + fingerprint(pubkey));
+    console.log("[agent] phone trusted (" + (config.pairingMode === "open" ? "open mode" : "pinned") + ") " + fingerprint(pubkey));
     sendSnapshot();
   } else {
     trusted = false;
@@ -316,6 +320,13 @@ function startPanel(port, tries = 0) {
         try { fs.writeFileSync(PAIRING_TXT, code + "\n"); } catch {}
         return send(200, { ok: true });
       }
+      // Switch connection mode: "open" (same-account, no code) vs "code" (require pairing code).
+      if (req.method === "POST" && req.url === "/api/pairmode") {
+        const b = await readJson(req);
+        const mode = b.mode === "code" ? "code" : "open";
+        config.pairingMode = mode; saveConfig(); status.pairingMode = mode;
+        return send(200, { ok: true, mode });
+      }
       res.writeHead(404); res.end("not found");
     } catch (e) { send(500, { error: String(e.message || e) }); }
   });
@@ -374,6 +385,10 @@ input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9p
 
   <div id="panel" class="hidden">
     <div id="pill" class="pill" style="background:var(--bg2);color:var(--muted)">…</div>
+    <div style="display:flex;align-items:center;justify-content:space-between;gap:10px;margin-top:14px;padding:10px;border:1px solid var(--line);border-radius:10px;background:var(--bg2)">
+      <div><div style="font-weight:600;font-size:13px">连接方式</div><div class="k" id="modeDesc">…</div></div>
+      <button id="modeBtn" type="button" style="padding:8px 12px;font-size:12px;font-weight:600;border:1px solid var(--line);background:var(--card);color:var(--text);border-radius:8px;cursor:pointer;white-space:nowrap">切换</button>
+    </div>
     <div id="pairBox" class="hidden" style="margin-top:14px">
       <div class="k">在手机/网页客户端首次连接时输入配对码：</div>
       <div style="display:flex;align-items:center;justify-content:center;gap:10px">
@@ -402,6 +417,7 @@ input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9p
 <script>
 var $=function(id){return document.getElementById(id)};
 var mode="login";
+var curMode="open";
 function setMode(m){mode=m;$("tabLogin").className="tab"+(m==="login"?" on":"");$("tabReg").className="tab"+(m==="reg"?" on":"");
   $("loginBtn").className="btn primary"+(m==="login"?"":" hidden");$("regBtn").className="btn ghost"+(m==="reg"?"":" hidden");$("msg").textContent="";}
 $("tabLogin").onclick=function(){setMode("login")};$("tabReg").onclick=function(){setMode("reg")};
@@ -430,6 +446,11 @@ $("copyCode").onclick=function(){
   if(navigator.clipboard&&navigator.clipboard.writeText){navigator.clipboard.writeText(c).then(done).catch(fallback);}else{fallback();}
   function fallback(){try{var r=document.createRange();r.selectNode($("code"));var s=getSelection();s.removeAllRanges();s.addRange(r);document.execCommand("copy");s.removeAllRanges();done();}catch(e){}}
 };
+$("modeBtn").onclick=function(){
+  var next=(curMode==="code")?"open":"code";
+  fetch("/api/pairmode",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify({mode:next})})
+   .then(function(r){return r.json()}).then(function(){poll();}).catch(function(){});
+};
 $("setCode").onclick=function(){
   var v=$("newCode").value.trim().toUpperCase();
   if(v.length<4){$("codeMsg").textContent="配对码至少 4 位";return;}
@@ -450,7 +471,11 @@ function render(s){
     return;}
   $("auth").className="hidden";$("panel").className="";
   var pill=$("pill");pill.textContent=LABEL[s.phase]||s.phase;pill.style.color="#042";pill.style.background=COLOR[s.phase]||"var(--muted)";
-  var showPair=(s.phase==="pairing"||s.phase==="waitingPeer"||s.phase==="paired");
+  curMode=s.pairingMode||"open";
+  var codeMode=(curMode==="code");
+  $("modeDesc").textContent=codeMode?"新设备首次需输入配对码(更安全)":"同账号登录即可连接，免配对码";
+  $("modeBtn").textContent=codeMode?"改为免码直连":"改为配对码";
+  var showPair=codeMode&&(s.phase==="pairing"||s.phase==="waitingPeer"||s.phase==="paired");
   $("pairBox").className=showPair?"":"hidden";$("code").textContent=s.pairingCode||"------";
   $("d_broker").className="dot"+(s.brokerConnected?" on":"");$("v_broker").textContent=s.brokerConnected?"已连接":"未连接";
   $("d_codex").className="dot"+(s.codexConnected?" on":"");$("v_codex").textContent=s.codexConnected?"已就绪":"未就绪";
