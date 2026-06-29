@@ -1,11 +1,11 @@
 import { useState } from "react";
 import { View, Text, TextInput, Pressable, StyleSheet, KeyboardAvoidingView, Platform, ScrollView } from "react-native";
 import { C } from "./theme";
+import { BROKER_URL } from "./config";
 
 export default function SetupScreen({ initial, onConnect }) {
   const [mode, setMode] = useState(initial?.mode || "cloud");
   const [reg, setReg] = useState(false);          // cloud: false=login, true=register
-  const [brokerUrl, setBrokerUrl] = useState(initial?.brokerUrl || "");
   const [email, setEmail] = useState(initial?.email || "");
   const [password, setPassword] = useState(initial?.password || "");
   const [pass2, setPass2] = useState("");
@@ -14,7 +14,7 @@ export default function SetupScreen({ initial, onConnect }) {
   const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
-  const broker = () => brokerUrl.trim().replace(/\/+$/, "");
+  const broker = () => BROKER_URL; // cloud broker is fixed
 
   const login = () => {
     if (!broker() || !email.trim() || !password) { setMsg("请填 Broker、邮箱、密码"); return; }
@@ -62,8 +62,6 @@ export default function SetupScreen({ initial, onConnect }) {
 
           {mode === "cloud" ? (
             <>
-              <Text style={s.label}>Broker 地址</Text>
-              <TextInput style={s.input} value={brokerUrl} onChangeText={setBrokerUrl} placeholder="https://broker.yourdomain.com" placeholderTextColor={C.muted} autoCapitalize="none" autoCorrect={false} keyboardType="url" />
               <Text style={s.label}>账号邮箱</Text>
               <TextInput style={s.input} value={email} onChangeText={setEmail} placeholder="you@example.com" placeholderTextColor={C.muted} autoCapitalize="none" autoCorrect={false} keyboardType="email-address" />
               <Text style={s.label}>密码</Text>

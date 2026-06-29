@@ -33,8 +33,12 @@ const KEYS_FILE = path.join(BASE, "agent.keys.json");
 const PAIRING_FILE = path.join(BASE, "agent.pairing.json");
 const PAIRING_TXT = path.join(BASE, "pairing-code.txt");
 
+// Cloud broker is FIXED for end users (they can only go through the server).
+// Dev can override it via the CODEXAPP_BROKER env var. LAN mode is unaffected.
+const CLOUD_BROKER = (process.env.CODEXAPP_BROKER || "https://broker.the5288.cn").replace(/\/+$/, "");
+
 const DEFAULTS = {
-  brokerUrl: "http://127.0.0.1:8787", email: "", password: "", codexBin: "",
+  email: "", password: "", codexBin: "",
   defaultCwd: os.homedir(), approvalPolicy: "on-request", sandbox: "workspace-write", model: null,
   originator: "codex_vscode", panelPort: 7878,
 };
@@ -43,7 +47,6 @@ function loadConfig() {
   let cfg = { ...DEFAULTS };
   if (fs.existsSync(CONFIG_FILE)) cfg = { ...cfg, ...JSON.parse(fs.readFileSync(CONFIG_FILE, "utf8")) };
   else fs.writeFileSync(CONFIG_FILE, JSON.stringify(cfg, null, 2));
-  cfg.brokerUrl = process.env.CODEXAPP_BROKER || cfg.brokerUrl;
   cfg.email = process.env.CODEXAPP_EMAIL || cfg.email;
   cfg.password = process.env.CODEXAPP_PASSWORD || cfg.password;
   return cfg;
@@ -86,7 +89,7 @@ const status = {
   fingerprint: fingerprint(keys.publicKey),
   pinnedCount: pairing.pinnedPhones.length,
   email: config.email || "",
-  brokerUrl: config.brokerUrl,
+  brokerUrl: CLOUD_BROKER,
   error: "",
 };
 function setStatus(p) { Object.assign(status, p); }
@@ -144,7 +147,7 @@ function handlePair(inner) {
 }
 
 async function login() {
-  const res = await fetch(config.brokerUrl.replace(/\/+$/, "") + "/api/login", {
+  const res = await fetch(CLOUD_BROKER + "/api/login", {
     method: "POST", headers: { "content-type": "application/json" },
     body: JSON.stringify({ email: config.email, password: config.password }),
   });
@@ -153,7 +156,7 @@ async function login() {
 }
 
 function connect(token) {
-  ws = new WebSocket(config.brokerUrl.replace(/^http/, "ws").replace(/\/+$/, "") + "/link");
+  ws = new WebSocket(CLOUD_BROKER.replace(/^http/, "ws") + "/link");
   ws.on("open", () => { backoff = 1000; ws.send(JSON.stringify({ type: "auth", token, role: "agent", pubkey: keys.publicKey })); });
   ws.on("message", (raw) => {
     let m; try { m = JSON.parse(raw.toString()); } catch { return; }
@@ -204,7 +207,7 @@ async function startAgent() {
   if (!config.email || !config.password) { running = false; setStatus({ phase: "needLogin" }); return; }
   running = true;
   try {
-    setStatus({ phase: "loggingIn", email: config.email, brokerUrl: config.brokerUrl, error: "" });
+    setStatus({ phase: "loggingIn", email: config.email, error: "" });
     const token = await login(); // validate creds BEFORE spawning Codex
     setStatus({ phase: "startingCodex" });
     if (!bridge.state.codexConnected) await bridge.start();
@@ -243,7 +246,7 @@ function startPanel(port, tries = 0) {
 
       if (req.method === "POST" && req.url === "/api/register") {
         const b = await readJson(req);
-        const url = (b.brokerUrl || config.brokerUrl).replace(/\/+$/, "");
+        const url = CLOUD_BROKER;
         try {
           const r = await fetch(url + "/api/register", { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ email: b.email, password: b.password }) });
           const j = await r.json().catch(() => ({}));
@@ -252,11 +255,10 @@ function startPanel(port, tries = 0) {
       }
       if (req.method === "POST" && req.url === "/api/login") {
         const b = await readJson(req);
-        config.brokerUrl = (b.brokerUrl || config.brokerUrl).trim();
         config.email = (b.email || "").trim();
         config.password = b.password || "";
         saveConfig();
-        setStatus({ email: config.email, brokerUrl: config.brokerUrl, error: "" });
+        setStatus({ email: config.email, error: "" });
         running = true;
         if (ws && ws.readyState === WebSocket.OPEN) { try { ws.close(); } catch {} } // reconnect with new creds
         else startAgent();
@@ -319,7 +321,7 @@ input{width:100%;padding:11px 12px;border:1px solid var(--line);border-radius:9p
 
   <div id="auth">
     <div class="tabs"><div id="tabLogin" class="tab on">登录</div><div id="tabReg" class="tab">注册</div></div>
-    <label>Broker 地址</label><input id="broker" placeholder="http://127.0.0.1:8787">
+    <p class="hint" style="margin:0 0 10px">服务器：${CLOUD_BROKER}</p>
     <label>邮箱</label><input id="email" placeholder="you@example.com" autocapitalize="off">
     <label>密码</label><input id="pass" type="password" placeholder="至少 8 位">
     <button id="loginBtn" class="btn primary">登录并启动</button>
@@ -352,15 +354,15 @@ var mode="login";
 function setMode(m){mode=m;$("tabLogin").className="tab"+(m==="login"?" on":"");$("tabReg").className="tab"+(m==="reg"?" on":"");
   $("loginBtn").className="btn primary"+(m==="login"?"":" hidden");$("regBtn").className="btn ghost"+(m==="reg"?"":" hidden");$("msg").textContent="";}
 $("tabLogin").onclick=function(){setMode("login")};$("tabReg").onclick=function(){setMode("reg")};
-function body(){return{brokerUrl:$("broker").value.trim(),email:$("email").value.trim(),password:$("pass").value}}
+function body(){return{email:$("email").value.trim(),password:$("pass").value}}
 $("loginBtn").onclick=function(){
-  var b=body();if(!b.brokerUrl||!b.email||!b.password){$("msg").textContent="请填写 Broker、邮箱、密码";return;}
+  var b=body();if(!b.email||!b.password){$("msg").textContent="请填写邮箱和密码";return;}
   $("msg").textContent="登录中…";
   fetch("/api/login",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)})
    .then(function(r){return r.json()}).then(function(){poll()}).catch(function(e){$("msg").textContent="出错："+e.message});
 };
 $("regBtn").onclick=function(){
-  var b=body();if(!b.brokerUrl||!b.email||!b.password){$("msg").textContent="请填写 Broker、邮箱、密码";return;}
+  var b=body();if(!b.email||!b.password){$("msg").textContent="请填写邮箱和密码";return;}
   $("msg").textContent="注册中…";
   fetch("/api/register",{method:"POST",headers:{"content-type":"application/json"},body:JSON.stringify(b)})
    .then(function(r){return r.json().then(function(j){return{s:r.status,j:j}})})
@@ -376,7 +378,6 @@ var LABEL={needLogin:"未登录",startingCodex:"正在启动本地 Codex…",log
 var COLOR={paired:"var(--accent)",waitingPeer:"var(--accent2)",pairing:"var(--accent2)",membership:"var(--danger)",error:"var(--danger)"};
 function render(s){
   if(s.phase==="needLogin"){$("auth").className="";$("panel").className="hidden";
-    if(s.brokerUrl&&!$("broker").value)$("broker").value=s.brokerUrl;
     if(s.email&&!$("email").value)$("email").value=s.email;
     if(s.error)$("msg").textContent="⚠ "+s.error;
     return;}
